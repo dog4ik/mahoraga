@@ -50,4 +50,13 @@ impl Value {
             _ => return Err(crate::Error::new("unsupported div operands")),
         })
     }
+
+    pub fn truthy(&self) -> bool {
+        match self {
+            Value::String(s) => !s.is_empty(),
+            Value::Number(n) => *n > 0.,
+            Value::Bool(b) => *b,
+            Value::Null => false,
+        }
+    }
 }

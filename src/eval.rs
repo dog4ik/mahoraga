@@ -80,6 +80,18 @@ pub fn eval(node: Node) -> crate::Result<Value> {
             crate::lex::Atom::NumLit(n) => Ok(Value::Number(n)),
             crate::lex::Atom::BoolLit(b) => Ok(Value::Bool(b)),
         },
+        Node::Turnary {
+            operand,
+            truth_node,
+            false_node,
+        } => {
+            let operand = eval(*operand)?;
+            if operand.truthy() {
+                eval(*truth_node)
+            } else {
+                eval(*false_node)
+            }
+        }
     }
 }
 
@@ -97,6 +109,29 @@ mod tests {
     #[test]
     fn add_and_mult() -> crate::Result<()> {
         assert_eq!(eval(parse_expr("(2 + 2) * 3")?)?, Value::Number(12.));
+        Ok(())
+    }
+
+    #[test]
+    fn turnary_true() -> crate::Result<()> {
+        assert_eq!(eval(parse_expr("true ? 1 : 2")?)?, Value::Number(1.));
+        Ok(())
+    }
+
+    #[test]
+    fn turnary_false() -> crate::Result<()> {
+        assert_eq!(eval(parse_expr("false ? 1 : 2")?)?, Value::Number(2.));
+        Ok(())
+    }
+
+    #[test]
+    fn nested_turnary_false() -> crate::Result<()> {
+        assert_eq!(
+            eval(parse_expr(
+                "false ? 1 ? 10 + 10 : 0 : \"test\" ? 100 * 125 : 0"
+            )?)?,
+            Value::Number(100. * 125.)
+        );
         Ok(())
     }
 }

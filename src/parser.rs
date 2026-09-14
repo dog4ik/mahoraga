@@ -1,11 +1,17 @@
 use crate::{
     Error,
     lex::{Atom, Lexer, Punct, Tok, Token},
+    punct_tok,
 };
 
 #[derive(Debug, PartialEq)]
 pub enum Node {
     Op((Punct, (Box<Node>, Box<Node>))),
+    Turnary {
+        operand: Box<Node>,
+        truth_node: Box<Node>,
+        false_node: Box<Node>,
+    },
     Atom(Atom),
 }
 
@@ -46,8 +52,19 @@ impl Parser {
                 }
                 self.lex.advance();
 
-                let rhs = self.parse_expr(r_bp)?;
-                lhs = Node::Op((punct, (Box::new(lhs), Box::new(rhs))));
+                if punct == Punct::Question {
+                    let mhs = self.parse_expr(0)?;
+                    self.lex.expect_next(punct_tok!(":"))?;
+                    let rhs = self.parse_expr(r_bp)?;
+                    lhs = Node::Turnary {
+                        operand: Box::new(lhs),
+                        truth_node: Box::new(mhs),
+                        false_node: Box::new(rhs),
+                    }
+                } else {
+                    let rhs = self.parse_expr(r_bp)?;
+                    lhs = Node::Op((punct, (Box::new(lhs), Box::new(rhs))));
+                }
                 continue;
             }
             break;
@@ -146,6 +163,25 @@ mod tests {
                     ))),
                 )
             ))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn turnary_expr() -> crate::Result<()> {
+        assert_eq!(
+            parse_expr("1 ? 10 + 2 : \"true\"")?,
+            Node::Turnary {
+                operand: Box::new(Node::Atom(1.0.into())),
+                truth_node: Box::new(Node::Op((
+                    Punct::Add,
+                    (
+                        Box::new(Node::Atom(10.0.into())),
+                        Box::new(Node::Atom(2.0.into()))
+                    )
+                ))),
+                false_node: Box::new(Node::Atom("true".into())),
+            }
         );
         Ok(())
     }

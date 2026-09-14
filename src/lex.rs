@@ -97,16 +97,17 @@ macro_rules! punct_tok {
 impl Punct {
     pub fn infix_binding_power(&self) -> Option<(u8, u8)> {
         match self {
-            Punct::Add | Punct::Sub => Some((3, 4)),
-            Punct::Mul | Punct::Div => Some((5, 6)),
             Punct::Pipe => Some((1, 2)),
+            Punct::Question => Some((3, 4)),
+            Punct::Add | Punct::Sub => Some((5, 6)),
+            Punct::Mul | Punct::Div => Some((7, 8)),
             _ => None,
         }
     }
 
     pub fn prefix_binding_power(&self) -> Option<((), u8)> {
         match self {
-            Punct::Add | Punct::Sub => Some(((), 7)),
+            Punct::Add | Punct::Sub => Some(((), 9)),
             _ => None,
         }
     }
@@ -363,27 +364,25 @@ fn tokenize(input: &str) -> crate::Result<Vec<Token>> {
             b'"' => {
                 i += 1;
                 let mut s = Vec::new();
-                while bytes.get(i).is_some() {
-                    let c = bytes[i];
+                loop {
+                    let Some(&c) = bytes.get(i) else {
+                        return Err(Error::new_with_span(
+                            "unclosed string literal",
+                            current_span(i),
+                        ));
+                    };
                     if c == b'"' {
                         i += 1;
                         break;
                     }
-                    let next = bytes[i + 1];
                     if c == b'\\' {
+                        let next = bytes[i + 1];
                         s.push(next);
                         i += 2;
                     } else {
                         s.push(c);
                         i += 1;
                     }
-                }
-
-                if i == start + 1 {
-                    return Err(Error::new_with_span(
-                        "unclosed string literal",
-                        current_span(i),
-                    ));
                 }
 
                 let s = String::from_utf8(s).map_err(|e| {
@@ -570,10 +569,10 @@ mod tests {
     #[test]
     fn string_lit_escaped() -> crate::Result<()> {
         assert_eq!(
-            tokenize(r#""\"Hello world!\""#)?,
+            tokenize(r#""\"Hello world!\"""#)?,
             vec![Token {
                 tok: Tok::Atom(Atom::StrLit(String::from(r#""Hello world!""#))),
-                span: Span { start: 0, end: 17 }
+                span: Span { start: 0, end: 18 }
             }]
         );
         Ok(())
@@ -582,10 +581,10 @@ mod tests {
     #[test]
     fn string_lit_double_escape() -> crate::Result<()> {
         assert_eq!(
-            tokenize(r#""\\\"Hello world!\\\""#)?,
+            tokenize(r#""\\\"Hello world!\\\"""#)?,
             vec![Token {
                 tok: Tok::Atom(Atom::StrLit(String::from(r#"\"Hello world!\""#))),
-                span: Span { start: 0, end: 21 }
+                span: Span { start: 0, end: 22 }
             }]
         );
         Ok(())
@@ -600,6 +599,12 @@ mod tests {
     #[test]
     fn invalid_literal() -> crate::Result<()> {
         assert_matches!(tokenize(r#"""#), Err(_));
+        Ok(())
+    }
+
+    #[test]
+    fn unclosed_invalid_literal() -> crate::Result<()> {
+        assert_matches!(tokenize(r#""value"#), Err(_));
         Ok(())
     }
 
@@ -652,6 +657,12 @@ mod tests {
                 }
             ]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn partial_ternary() -> crate::Result<()> {
+        assert_matches!(tokenize(r#"19 ? 1 : "truee"#), Err(_));
         Ok(())
     }
 
