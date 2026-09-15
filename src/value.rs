@@ -119,3 +119,35 @@ impl Value {
         }))
     }
 }
+
+#[cfg(feature = "serde_json")]
+mod from_serde_json {
+    use super::*;
+
+    impl From<serde_json::Value> for Value {
+        fn from(value: serde_json::Value) -> Self {
+            match value {
+                serde_json::Value::Bool(b) => Self::Bool(b),
+                serde_json::Value::Number(number) => Self::Number(
+                    number
+                        .as_f64()
+                        .expect("each number should be convertible to f64"),
+                ),
+                serde_json::Value::String(s) => Self::String(s),
+                serde_json::Value::Array(values) => {
+                    Self::Array(Array(values.into_iter().map(|v| Self::from(v)).collect()))
+                }
+                serde_json::Value::Object(map) => Self::Object(Object::from(map)),
+                serde_json::Value::Null => Self::Null,
+            }
+        }
+    }
+
+    impl From<serde_json::Map<String, serde_json::Value>> for Object {
+        fn from(value: serde_json::Map<String, serde_json::Value>) -> Self {
+            Object(HashMap::from_iter(
+                value.into_iter().map(|(k, v)| (k, Value::from(v))),
+            ))
+        }
+    }
+}
