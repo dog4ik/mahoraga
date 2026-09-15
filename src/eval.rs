@@ -71,6 +71,11 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
             crate::lex::Punct::Mul => eval(*lhs, env)?.mul(eval(*rhs, env)?),
             crate::lex::Punct::Sub => eval(*lhs, env)?.sub(eval(*rhs, env)?),
             crate::lex::Punct::Div => eval(*lhs, env)?.div(eval(*rhs, env)?),
+            crate::lex::Punct::Less => eval(*lhs, env)?.lt(eval(*rhs, env)?),
+            crate::lex::Punct::LessOrEq => eval(*lhs, env)?.lte(eval(*rhs, env)?),
+            crate::lex::Punct::More => eval(*lhs, env)?.mt(eval(*rhs, env)?),
+            crate::lex::Punct::MoreOrEq => eval(*lhs, env)?.mte(eval(*rhs, env)?),
+            crate::lex::Punct::CmpEqual => eval(*lhs, env)?.eq(eval(*rhs, env)?),
             crate::lex::Punct::Pipe => {
                 let lhs = eval(*lhs, env)?;
                 let ident = match *rhs {
@@ -165,6 +170,40 @@ mod tests {
                 "false ? 1 ? 10 + 10 : 0 : \"test\" ? 100 * 125 : 0"
             )?)?,
             Value::Number(100. * 125.)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn mte() -> crate::Result<()> {
+        assert_eq!(eval(parse_expr("11.3 >= 12")?)?, Value::Bool(false));
+        assert_eq!(eval(parse_expr("10.0 >= 10")?)?, Value::Bool(true));
+        assert_eq!(eval(parse_expr("9.0 >= 10")?)?, Value::Bool(false));
+        Ok(())
+    }
+
+    #[test]
+    fn mt() -> crate::Result<()> {
+        assert_eq!(eval(parse_expr("11.3 > 12")?)?, Value::Bool(false));
+        assert_eq!(eval(parse_expr("10.0 > 10")?)?, Value::Bool(false));
+        assert_eq!(eval(parse_expr("9.0 > 10")?)?, Value::Bool(false));
+        Ok(())
+    }
+
+    #[test]
+    fn eq_with_ternary() -> crate::Result<()> {
+        assert_eq!(
+            eval(parse_expr("10 > 5 ? true : false")?)?,
+            Value::Bool(true)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn eq_with_ternary2() -> crate::Result<()> {
+        assert_eq!(
+            eval(parse_expr("10 >= 10 ? true : false")?)?,
+            Value::Bool(true)
         );
         Ok(())
     }

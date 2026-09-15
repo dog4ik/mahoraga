@@ -32,16 +32,6 @@ impl Display for Tok {
     }
 }
 
-impl FromStr for Tok {
-    type Err = Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Punct::from_str(s)
-            .map(Self::Punct)
-            .or_else(|_| Punct::from_str(s).map(Self::Punct))
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Punct {
     Add,
@@ -55,6 +45,13 @@ pub enum Punct {
     Colon,
     Dot,
     Pipe,
+    Less,
+    LessOrEq,
+    More,
+    MoreOrEq,
+    CmpEqual,
+    Or,
+    And,
 }
 
 #[macro_export]
@@ -92,6 +89,27 @@ macro_rules! punct_tok {
     ("|") => {
         Tok::Punct(Punct::Pipe)
     };
+    (">") => {
+        Tok::Punct(Punct::More)
+    };
+    (">=") => {
+        Tok::Punct(Punct::MoreOrEq)
+    };
+    ("<") => {
+        Tok::Punct(Punct::Less)
+    };
+    ("<=") => {
+        Tok::Punct(Punct::LessOrEq)
+    };
+    ("==") => {
+        Tok::Punct(Punct::CmpEqual)
+    };
+    ("||") => {
+        Tok::Punct(Punct::Or)
+    };
+    ("&&") => {
+        Tok::Punct(Punct::And)
+    };
 }
 
 impl Punct {
@@ -99,38 +117,19 @@ impl Punct {
         match self {
             Punct::Pipe => Some((1, 2)),
             Punct::Question => Some((3, 4)),
-            Punct::Add | Punct::Sub => Some((5, 6)),
-            Punct::Mul | Punct::Div => Some((7, 8)),
-            Punct::Dot => Some((10, 11)),
+            Punct::More | Punct::MoreOrEq | Punct::Less | Punct::LessOrEq => Some((5, 6)),
+            Punct::Add | Punct::Sub => Some((6, 7)),
+            Punct::Mul | Punct::Div => Some((8, 9)),
+            Punct::Dot => Some((11, 12)),
             _ => None,
         }
     }
 
     pub fn prefix_binding_power(&self) -> Option<((), u8)> {
         match self {
-            Punct::Add | Punct::Sub => Some(((), 9)),
+            Punct::Add | Punct::Sub => Some(((), 10)),
             _ => None,
         }
-    }
-}
-
-impl FromStr for Punct {
-    type Err = crate::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s {
-            "+" => Self::Add,
-            "*" => Self::Mul,
-            "-" => Self::Sub,
-            "/" => Self::Div,
-            "(" => Self::OpenParen,
-            ")" => Self::CloseParen,
-            "??" => Self::Coalesce,
-            "?" => Self::Question,
-            "." => Self::Dot,
-            "|" => Self::Pipe,
-            _ => return Err(Error::new(format!("unrecognized op: {s}"))),
-        })
     }
 }
 
@@ -148,6 +147,13 @@ impl Display for Punct {
             Punct::Colon => f.write_char(':'),
             Punct::Dot => f.write_char('.'),
             Punct::Pipe => f.write_char('|'),
+            Punct::More => f.write_char('>'),
+            Punct::MoreOrEq => f.write_str(">="),
+            Punct::Less => f.write_char('<'),
+            Punct::LessOrEq => f.write_str("<="),
+            Punct::CmpEqual => f.write_str("=="),
+            Punct::Or => f.write_str("||"),
+            Punct::And => f.write_str("&&"),
         }
     }
 }
@@ -270,6 +276,33 @@ fn tokenize(input: &str) -> crate::Result<Vec<Token>> {
             b'|' => {
                 i += 1;
                 Tok::Punct(Punct::Pipe)
+            }
+            b'>' => {
+                i += 1;
+                if bytes.get(i).is_some_and(|&b| b == b'=') {
+                    i += 1;
+                    Tok::Punct(Punct::MoreOrEq)
+                } else {
+                    Tok::Punct(Punct::More)
+                }
+            }
+            b'<' => {
+                i += 1;
+                if bytes.get(i).is_some_and(|&b| b == b'=') {
+                    i += 1;
+                    Tok::Punct(Punct::LessOrEq)
+                } else {
+                    Tok::Punct(Punct::Less)
+                }
+            }
+            b'=' => {
+                i += 1;
+                if bytes.get(i).is_some_and(|&b| b == b'=') {
+                    i += 1;
+                    Tok::Punct(Punct::CmpEqual)
+                } else {
+                    return Err(Error::new_with_span("expected second =", current_span(i)));
+                }
             }
             b'?' => {
                 if let Some(b'?') = bytes.get(i + 1) {
@@ -696,6 +729,56 @@ mod tests {
                 }
             ]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn less_or_equal() -> crate::Result<()> {
+        assert_eq!(
+            tokenize("1 <= 10")?,
+            vec![
+                Token {
+                    tok: Tok::Atom(1.0.into()),
+                    span: Span { start: 0, end: 1 }
+                },
+                Token {
+                    tok: punct_tok!("<="),
+                    span: Span { start: 2, end: 4 }
+                },
+                Token {
+                    tok: Tok::Atom(10.0.into()),
+                    span: Span { start: 5, end: 7 }
+                },
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cmp_equal() -> crate::Result<()> {
+        assert_eq!(
+            tokenize("1 == 10")?,
+            vec![
+                Token {
+                    tok: Tok::Atom(1.0.into()),
+                    span: Span { start: 0, end: 1 }
+                },
+                Token {
+                    tok: punct_tok!("=="),
+                    span: Span { start: 2, end: 4 }
+                },
+                Token {
+                    tok: Tok::Atom(10.0.into()),
+                    span: Span { start: 5, end: 7 }
+                },
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cmp_invalid_equal() -> crate::Result<()> {
+        assert_matches!(tokenize("1 = 10"), Err(_));
         Ok(())
     }
 

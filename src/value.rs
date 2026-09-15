@@ -71,4 +71,51 @@ impl Value {
             Self::Array(Array(arr)) => !arr.is_empty(),
         }
     }
+
+    pub fn mt(&self, other: Value) -> Result<Value, crate::Error> {
+        Ok(Value::Bool(match (self, other) {
+            (Value::String(s), Value::String(o)) => *s > o,
+            (Value::Number(s), Value::Number(o)) => *s > o,
+            (Value::Bool(s), Value::Bool(o)) => *s & !o,
+            _ => return Err(crate::Error::new("unsupported mt operands")),
+        }))
+    }
+
+    pub fn mte(&self, other: Value) -> Result<Value, crate::Error> {
+        Ok(Value::Bool(match (self, other) {
+            (Value::String(s), Value::String(o)) => *s >= o,
+            (Value::Number(s), Value::Number(o)) => *s >= o,
+            (Value::Bool(s), Value::Bool(o)) => *s >= o,
+            _ => return Err(crate::Error::new("unsupported mte operands")),
+        }))
+    }
+
+    pub fn lt(&self, other: Value) -> Result<Value, crate::Error> {
+        Ok(Value::Bool(match (self, other) {
+            (Value::String(s), Value::String(o)) => *s < o,
+            (Value::Number(s), Value::Number(o)) => *s < o,
+            (Value::Bool(s), Value::Bool(o)) => !*s & o,
+            _ => return Err(crate::Error::new("unsupported lt operands")),
+        }))
+    }
+
+    pub fn lte(&self, other: Value) -> Result<Value, crate::Error> {
+        Ok(Value::Bool(match (self, other) {
+            (Value::String(s), Value::String(o)) => *s <= o,
+            (Value::Number(s), Value::Number(o)) => *s <= o,
+            (Value::Bool(s), Value::Bool(o)) => *s <= o,
+            _ => return Err(crate::Error::new("unsupported lte operands")),
+        }))
+    }
+
+    pub fn eq(&self, other: Value) -> Result<Value, crate::Error> {
+        Ok(Value::Bool(match (self, other) {
+            (Value::String(s), Value::String(o)) => *s == o,
+            (Value::Number(s), Value::Number(o)) => *s == o,
+            (Value::Bool(s), Value::Bool(o)) => *s == o,
+            (Value::Null, Value::Null) => true,
+            (Value::Array(Array(s)), Value::Array(Array(o))) => *s == o,
+            _ => return Err(crate::Error::new("unsupported eq operands")),
+        }))
+    }
 }
