@@ -9,16 +9,12 @@ use crate::{
 
 #[derive(Debug)]
 pub struct PureFunction {
-    name: &'static str,
     f: fn(val: Value) -> crate::Result<Value>,
 }
 
-#[derive(Debug)]
-pub struct RuntimeObject(pub HashMap<String, Value>);
-
 #[derive(Debug, Default)]
 pub struct Env {
-    pub fns: Vec<PureFunction>,
+    pub fns: HashMap<&'static str, PureFunction>,
     pub runtime_objects: Object,
 }
 
@@ -43,16 +39,20 @@ mod std_fns {
 impl Env {
     pub fn std() -> Self {
         Self {
-            fns: vec![
-                PureFunction {
-                    name: "upper",
-                    f: std_fns::to_uppercase,
-                },
-                PureFunction {
-                    name: "lower",
-                    f: std_fns::to_lowercase,
-                },
-            ],
+            fns: HashMap::from_iter([
+                (
+                    "upper",
+                    PureFunction {
+                        f: std_fns::to_uppercase,
+                    },
+                ),
+                (
+                    "lower",
+                    PureFunction {
+                        f: std_fns::to_lowercase,
+                    },
+                ),
+            ]),
             runtime_objects: Object(HashMap::from_iter([(
                 String::from("constants"),
                 Value::Object(Object(HashMap::from_iter([
@@ -61,6 +61,15 @@ impl Env {
                 ]))),
             )])),
         }
+    }
+
+    pub fn attach_object(&mut self, obj: impl Into<Object>) {
+        self.runtime_objects.0.extend(obj.into().0);
+    }
+
+    pub fn merge(&mut self, other: Env) {
+        self.fns.extend(other.fns);
+        self.runtime_objects.0.extend(other.runtime_objects.0);
     }
 }
 
@@ -84,8 +93,7 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
                 };
                 let f = env
                     .fns
-                    .iter()
-                    .find(|n| ident == n.name)
+                    .get(ident.as_str())
                     .ok_or_else(|| Error::new("could not find function"))?;
                 (f.f)(lhs)
             }
@@ -131,11 +139,23 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
-    use crate::parser::parse_expr;
+    use crate::{parser::parse_expr, span::Span};
 
     fn eval(node: Node) -> crate::Result<Value> {
         let env = Env::std();
+        super::eval(node, &env)
+    }
+
+    fn eval_str(s: &str) -> crate::Result<Value> {
+        let node = parse_expr(s)?;
+        let mut env = Env::std();
+        match scope() {
+            Value::Object(object) => env.attach_object(object),
+            _ => panic!("scope return object value"),
+        }
         super::eval(node, &env)
     }
 
@@ -206,5 +226,113 @@ mod tests {
             Value::Bool(true)
         );
         Ok(())
+    }
+
+    fn scope() -> Value {
+        json!({
+            "payment": { "token": "tok_1", "gateway_amount": 1000, "product": null,
+                         "order_number": "ORD-9" },
+            "params":  { "phone": null, "customer": { "phone": "0798288410" },
+                         "first_name": "John", "last_name": "Doe",
+                         "extra_return_param": "_blank_" },
+            "settings": { "wallet": "w1", "code": "MPESA", "channel": "Mpesa" },
+            "steps":   { "auth": { "access_token": "abc" } },
+            "env":     { "callback_url": "https://cb.example/gateway/callback" }
+        })
+        .into()
+    }
+
+    fn ev(src: &str) -> Value {
+        eval_str(src).unwrap_or_else(|e| panic!("{src}: {e}"))
+    }
+
+    #[test]
+    fn reads_nested_paths() {
+        assert_eq!(ev("payment.token"), json!("tok_1").into());
+        assert_eq!(ev("steps.auth.access_token"), json!("abc").into());
+        assert_eq!(
+            ev("env.callback_url"),
+            json!("https://cb.example/gateway/callback").into()
+        );
+    }
+
+    #[test]
+    fn missing_paths_and_roots_are_null() {
+        assert_eq!(ev("payment.nope"), Value::Null);
+        assert_eq!(ev("payment.nope.deeper"), Value::Null);
+        assert_eq!(ev("nosuchroot.x"), Value::Null);
+        assert_eq!(ev("params.customer[3]"), Value::Null);
+    }
+
+    #[test]
+    fn coalesce_skips_null_and_empty() {
+        assert_eq!(
+            ev("payment.product ?? payment.order_number ?? 'Payment'"),
+            json!("ORD-9").into()
+        );
+        assert_eq!(
+            ev("payment.product ?? payment.nope ?? 'Payment'"),
+            json!("Payment").into()
+        );
+        assert_eq!(
+            ev("params.phone ?? params.customer.phone"),
+            json!("0798288410").into()
+        );
+    }
+
+    #[test]
+    fn reproduces_the_scripay_channel_rule() {
+        // extra_return_param is the sentinel, so the merchant default wins.
+        assert_eq!(
+            ev("params.extra_return_param | null_if('_blank_') ?? settings.channel"),
+            json!("Mpesa").into()
+        );
+    }
+
+    #[test]
+    fn reproduces_the_scripay_account_name_rule() {
+        assert_eq!(
+            ev("[params.first_name, params.last_name] | join(' ') | trim"),
+            json!("John Doe").into()
+        );
+    }
+
+    #[test]
+    fn amount_conversion_stays_typed() {
+        assert_eq!(
+            ev("payment.gateway_amount | minor_to_major"),
+            json!(10).into()
+        );
+    }
+
+    #[test]
+    fn absence_flows_through_a_pipeline() {
+        assert_eq!(ev("payment.product | trim | upper"), Value::Null);
+        assert_eq!(
+            ev("payment.product | trim ?? 'fallback'"),
+            json!("fallback").into()
+        );
+    }
+
+    #[test]
+    fn arity_is_checked_before_evaluation() {
+        let err = eval_str("payment.token | null_if").unwrap_err();
+        assert!(err.message.contains("takes 1 argument"), "{}", err.message);
+    }
+
+    #[test]
+    fn function_errors_carry_the_call_span() {
+        let err = eval_str("params.customer | trim").unwrap_err();
+        assert!(err.message.starts_with("trim:"), "{}", err.message);
+        assert_eq!(err.span, Some(Span::new(18, 22)));
+    }
+
+    #[test]
+    fn object_and_array_literals_evaluate() {
+        assert_eq!(
+            ev("{a: payment.token, b: 2}"),
+            json!({"a": "tok_1", "b": 2}).into()
+        );
+        assert_eq!(ev("[1, payment.token]"), json!([1, "tok_1"]).into());
     }
 }

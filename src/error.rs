@@ -4,8 +4,8 @@ use crate::span::Span;
 
 #[derive(Debug, Clone)]
 pub struct Error {
-    span: Option<Span>,
-    message: String,
+    pub span: Option<Span>,
+    pub message: String,
 }
 
 impl Display for Error {

@@ -120,7 +120,7 @@ impl Value {
     }
 }
 
-#[cfg(feature = "serde_json")]
+#[cfg(any(feature = "serde_json", test))]
 mod from_serde_json {
     use super::*;
 

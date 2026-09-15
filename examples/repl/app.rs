@@ -99,6 +99,6 @@ impl App {
     }
 
     fn eval(&self, input: &str) -> mahoraga::Result<Value> {
-        mahoraga::eval(mahoraga::parser::parse_expr(input)?, &self.env)
+        mahoraga::eval(mahoraga::parse_expr(input)?, &self.env)
     }
 }
