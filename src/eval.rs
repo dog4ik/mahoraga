@@ -1,8 +1,10 @@
+use std::{collections::HashMap, f64::consts};
+
 use crate::{
     Error,
     lex::{Atom, Ident},
     parser::Node,
-    value::Value,
+    value::{Object, Value},
 };
 
 #[derive(Debug)]
@@ -11,9 +13,13 @@ pub struct PureFunction {
     f: fn(val: Value) -> crate::Result<Value>,
 }
 
+#[derive(Debug)]
+pub struct RuntimeObject(pub HashMap<String, Value>);
+
 #[derive(Debug, Default)]
 pub struct Env {
     pub fns: Vec<PureFunction>,
+    pub runtime_objects: Object,
 }
 
 mod std_fns {
@@ -35,7 +41,7 @@ mod std_fns {
 }
 
 impl Env {
-    fn std() -> Self {
+    pub fn std() -> Self {
         Self {
             fns: vec![
                 PureFunction {
@@ -47,20 +53,26 @@ impl Env {
                     f: std_fns::to_lowercase,
                 },
             ],
+            runtime_objects: Object(HashMap::from_iter([(
+                String::from("constants"),
+                Value::Object(Object(HashMap::from_iter([
+                    (String::from("pi"), Value::Number(consts::PI)),
+                    (String::from("tau"), Value::Number(consts::TAU)),
+                ]))),
+            )])),
         }
     }
 }
 
-pub fn eval(node: Node) -> crate::Result<Value> {
-    let env = Env::std();
+pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
     match node {
         Node::Op((punct, (lhs, rhs))) => match punct {
-            crate::lex::Punct::Add => eval(*lhs)?.add(eval(*rhs)?),
-            crate::lex::Punct::Mul => eval(*lhs)?.mul(eval(*rhs)?),
-            crate::lex::Punct::Sub => eval(*lhs)?.sub(eval(*rhs)?),
-            crate::lex::Punct::Div => eval(*lhs)?.div(eval(*rhs)?),
+            crate::lex::Punct::Add => eval(*lhs, env)?.add(eval(*rhs, env)?),
+            crate::lex::Punct::Mul => eval(*lhs, env)?.mul(eval(*rhs, env)?),
+            crate::lex::Punct::Sub => eval(*lhs, env)?.sub(eval(*rhs, env)?),
+            crate::lex::Punct::Div => eval(*lhs, env)?.div(eval(*rhs, env)?),
             crate::lex::Punct::Pipe => {
-                let lhs = eval(*lhs)?;
+                let lhs = eval(*lhs, env)?;
                 let ident = match *rhs {
                     Node::Atom(Atom::Ident(Ident(ident))) => ident,
                     _ => return Err(Error::new("rhs of pipe should be ident")),
@@ -75,7 +87,9 @@ pub fn eval(node: Node) -> crate::Result<Value> {
             _ => Err(Error::new(format!("can't eval {punct}"))),
         },
         Node::Atom(atom) => match atom {
-            crate::lex::Atom::Ident(_) => Err(Error::new("idents are not supported yet")),
+            crate::lex::Atom::Ident(Ident(_)) => {
+                Err(Error::new("raw idents are not supported yet"))
+            }
             crate::lex::Atom::StrLit(s) => Ok(Value::String(s)),
             crate::lex::Atom::NumLit(n) => Ok(Value::Number(n)),
             crate::lex::Atom::BoolLit(b) => Ok(Value::Bool(b)),
@@ -85,12 +99,27 @@ pub fn eval(node: Node) -> crate::Result<Value> {
             truth_node,
             false_node,
         } => {
-            let operand = eval(*operand)?;
+            let operand = eval(*operand, env)?;
             if operand.truthy() {
-                eval(*truth_node)
+                eval(*truth_node, env)
             } else {
-                eval(*false_node)
+                eval(*false_node, env)
             }
+        }
+        Node::Path(path) => {
+            let mut obj = &env.runtime_objects.0;
+            for Ident(component) in &path[0..path.len() - 1] {
+                obj = obj
+                    .get(component)
+                    .and_then(|v| match v {
+                        Value::Object(Object(object)) => Some(object),
+                        _ => None,
+                    })
+                    .ok_or_else(|| Error::new("failed to lookup path"))?;
+            }
+            obj.get(&path[path.len() - 1].0)
+                .cloned()
+                .ok_or_else(|| Error::new("missing object child"))
         }
     }
 }
@@ -99,6 +128,11 @@ pub fn eval(node: Node) -> crate::Result<Value> {
 mod tests {
     use super::*;
     use crate::parser::parse_expr;
+
+    fn eval(node: Node) -> crate::Result<Value> {
+        let env = Env::std();
+        super::eval(node, &env)
+    }
 
     #[test]
     fn basic_add() -> crate::Result<()> {

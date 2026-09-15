@@ -1,4 +1,10 @@
-use std::fmt::Display;
+use std::{collections::HashMap, fmt::Display};
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Object(pub HashMap<String, Value>);
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Array(pub Vec<Value>);
 
 /// Runtime value
 #[derive(Debug, Clone, PartialEq)]
@@ -6,6 +12,8 @@ pub enum Value {
     String(String),
     Number(f64),
     Bool(bool),
+    Object(Object),
+    Array(Array),
     Null,
 }
 
@@ -15,6 +23,8 @@ impl Display for Value {
             Value::String(s) => write!(f, "\"{s}\""),
             Value::Number(n) => write!(f, "{n}"),
             Value::Bool(b) => write!(f, "{b}"),
+            Value::Object(obj) => write!(f, "{obj:?}"),
+            Value::Array(arr) => write!(f, "{arr:?}"),
             Value::Null => write!(f, "null"),
         }
     }
@@ -57,6 +67,8 @@ impl Value {
             Value::Number(n) => *n > 0.,
             Value::Bool(b) => *b,
             Value::Null => false,
+            Self::Object(Object(obj)) => !obj.is_empty(),
+            Self::Array(Array(arr)) => !arr.is_empty(),
         }
     }
 }

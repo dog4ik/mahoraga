@@ -1,6 +1,9 @@
 use std::io::stdin;
 
-use mahoraga::{eval, parser::parse_expr};
+use mahoraga::{
+    eval::{self, Env},
+    parser::parse_expr,
+};
 
 fn main() {
     let mut lines = stdin().lines();
@@ -13,7 +16,8 @@ fn main() {
                 continue;
             }
         };
-        match eval::eval(node) {
+        let env = Env::std();
+        match eval::eval(node, &env) {
             Ok(v) => println!("{v}"),
             Err(e) => eprintln!("{e}"),
         }

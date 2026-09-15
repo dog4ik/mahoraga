@@ -101,6 +101,7 @@ impl Punct {
             Punct::Question => Some((3, 4)),
             Punct::Add | Punct::Sub => Some((5, 6)),
             Punct::Mul | Punct::Div => Some((7, 8)),
+            Punct::Dot => Some((10, 11)),
             _ => None,
         }
     }
@@ -344,7 +345,9 @@ fn tokenize(input: &str) -> crate::Result<Vec<Token>> {
             b'a'..=b'z' | b'A'..=b'Z' => {
                 i += 1;
                 while bytes.get(i).is_some_and(|next| {
-                    !next.is_ascii_whitespace() && !IMPLICIT_SEPARATORS.contains(next)
+                    !next.is_ascii_whitespace()
+                        && !IMPLICIT_SEPARATORS.contains(next)
+                        && *next != b'.'
                 }) {
                     i += 1;
                 }
@@ -663,6 +666,36 @@ mod tests {
     #[test]
     fn partial_ternary() -> crate::Result<()> {
         assert_matches!(tokenize(r#"19 ? 1 : "truee"#), Err(_));
+        Ok(())
+    }
+
+    #[test]
+    fn path_ident() -> crate::Result<()> {
+        assert_eq!(
+            tokenize("foo.bar.baz")?,
+            vec![
+                Token {
+                    tok: Tok::Atom(Atom::Ident(Ident("foo".into()))),
+                    span: Span { start: 0, end: 3 }
+                },
+                Token {
+                    tok: punct_tok!("."),
+                    span: Span { start: 3, end: 4 }
+                },
+                Token {
+                    tok: Tok::Atom(Atom::Ident(Ident("bar".into()))),
+                    span: Span { start: 4, end: 7 }
+                },
+                Token {
+                    tok: punct_tok!("."),
+                    span: Span { start: 7, end: 8 }
+                },
+                Token {
+                    tok: Tok::Atom(Atom::Ident(Ident("baz".into()))),
+                    span: Span { start: 8, end: 11 }
+                }
+            ]
+        );
         Ok(())
     }
 

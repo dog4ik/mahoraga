@@ -1,6 +1,6 @@
 use crate::{
     Error,
-    lex::{Atom, Lexer, Punct, Tok, Token},
+    lex::{Atom, Ident, Lexer, Punct, Tok, Token},
     punct_tok,
 };
 
@@ -12,6 +12,7 @@ pub enum Node {
         truth_node: Box<Node>,
         false_node: Box<Node>,
     },
+    Path(Vec<Ident>),
     Atom(Atom),
 }
 
@@ -34,6 +35,14 @@ impl Parser {
                 self.lex.expect_next(Tok::Punct(Punct::CloseParen))?;
                 lhs
             }
+            Some(Token {
+                tok: Tok::Punct(p @ (Punct::Add | Punct::Sub)),
+                ..
+            }) => {
+                let ((), r_bp) = p.prefix_binding_power().expect("add has prefix bp");
+                let rhs = self.parse_expr(r_bp)?;
+                Node::Op((p, (Box::new(Node::Atom(0.0.into())), Box::new(rhs))))
+            }
             _ => return Err(Error::new("bad token, expected atom")),
         };
 
@@ -52,7 +61,25 @@ impl Parser {
                 }
                 self.lex.advance();
 
-                if punct == Punct::Question {
+                if punct == Punct::Dot {
+                    let ident = match self.lex.advance() {
+                        Some(Token {
+                            tok: Tok::Atom(Atom::Ident(ident)),
+                            ..
+                        }) => ident,
+                        _ => {
+                            return Err(Error::new("expected path or ident"));
+                        }
+                    };
+                    match lhs {
+                        Node::Atom(Atom::Ident(lhs_ident)) => {
+                            lhs = Node::Path(vec![lhs_ident, ident])
+                        }
+                        Node::Path(ref mut path) => path.push(ident),
+                        _ => return Err(Error::new("expected path or ident")),
+                    }
+                    continue;
+                } else if punct == Punct::Question {
                     let mhs = self.parse_expr(0)?;
                     self.lex.expect_next(punct_tok!(":"))?;
                     let rhs = self.parse_expr(r_bp)?;
@@ -182,6 +209,19 @@ mod tests {
                 ))),
                 false_node: Box::new(Node::Atom("true".into())),
             }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn path() -> crate::Result<()> {
+        assert_eq!(
+            parse_expr("test.mail.ru")?,
+            Node::Path(vec![
+                Ident("test".into()),
+                Ident("mail".into()),
+                Ident("ru".into()),
+            ])
         );
         Ok(())
     }
