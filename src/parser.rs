@@ -4,7 +4,7 @@ use crate::{
     punct_tok,
 };
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Node {
     Op((Punct, (Box<Node>, Box<Node>))),
     Turnary {
@@ -47,7 +47,7 @@ impl Parser {
                 ..
             }) => {
                 let lhs = self.parse_expr(0)?;
-                self.lex.expect_next(Tok::Punct(Punct::CloseParen))?;
+                self.lex.expect_next(Tok::Punct(Punct::CloseBracket))?;
                 lhs
             }
             Some(Token {
