@@ -6,6 +6,8 @@ mod span;
 pub mod value;
 
 pub use error::Error;
+pub use lex::{Atom, Ident, Punct};
+pub use span::Span;
 pub type Result<T> = std::result::Result<T, Error>;
 pub use eval::Env;
 pub use eval::PureFunction;

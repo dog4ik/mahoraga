@@ -187,7 +187,9 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
             match object {
                 Value::Object(Object(obj)) => Ok(obj.get(&field).cloned().unwrap_or(Value::Null)),
                 Value::Null => Ok(Value::Null),
-                _ => Err(Error::new("only object can have member access")),
+                _ => Err(Error::new(format!(
+                    "only object can have member access, got {object:?}"
+                ))),
             }
         }
     }
