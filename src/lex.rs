@@ -54,6 +54,7 @@ pub enum Punct {
     CmpEqual,
     Or,
     And,
+    Comma,
 }
 
 #[macro_export]
@@ -118,6 +119,9 @@ macro_rules! punct_tok {
     ("]") => {
         Tok::Punct(Punct::CloseBracket)
     };
+    (",") => {
+        Tok::Punct(Punct::Comma)
+    };
 }
 
 impl Punct {
@@ -174,6 +178,7 @@ impl Display for Punct {
             Punct::And => f.write_str("&&"),
             Punct::OpenBracket => f.write_char('['),
             Punct::CloseBracket => f.write_char(']'),
+            Punct::Comma => f.write_char(','),
         }
     }
 }
@@ -238,7 +243,7 @@ impl FromStr for Ident {
     }
 }
 
-const IMPLICIT_SEPARATORS: &[u8] = b")+-/*|&[]";
+const IMPLICIT_SEPARATORS: &[u8] = b")+-/*|&[],";
 
 #[derive(Debug)]
 pub struct Lexer {
@@ -300,6 +305,10 @@ fn tokenize(input: &str) -> crate::Result<Vec<Token>> {
             b'.' => {
                 i += 1;
                 Tok::Punct(Punct::Dot)
+            }
+            b',' => {
+                i += 1;
+                Tok::Punct(Punct::Comma)
             }
             b'|' => {
                 i += 1;

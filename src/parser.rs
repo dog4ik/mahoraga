@@ -20,6 +20,7 @@ pub enum Node {
         object: Box<Node>,
         index: Box<Node>,
     },
+    ArrayLit(Vec<Node>),
     Atom(Atom),
 }
 
@@ -46,9 +47,26 @@ impl Parser {
                 tok: Tok::Punct(Punct::OpenBracket),
                 ..
             }) => {
-                let lhs = self.parse_expr(0)?;
+                let mut args = Vec::new();
+                if !matches!(
+                    self.lex.peek(),
+                    Some(Token {
+                        tok: punct_tok!("]"),
+                        ..
+                    })
+                ) {
+                    args.push(self.parse_expr(0)?);
+                    while let Some(Token {
+                        tok: punct_tok!(","),
+                        ..
+                    }) = self.lex.peek()
+                    {
+                        self.lex.advance();
+                        args.push(self.parse_expr(0)?);
+                    }
+                }
                 self.lex.expect_next(Tok::Punct(Punct::CloseBracket))?;
-                lhs
+                Node::ArrayLit(args)
             }
             Some(Token {
                 tok: Tok::Punct(p @ (Punct::Add | Punct::Sub)),
@@ -337,5 +355,56 @@ mod tests {
             }
         );
         Ok(())
+    }
+
+    #[test]
+    fn array_literal_elements_are_full_expressions() -> crate::Result<()> {
+        assert_eq!(
+            parse_expr("[1, a.b, c ? 2 : 3, (1 + 2) * 3]")?,
+            Node::ArrayLit(vec![
+                Node::Atom(1.0.into()),
+                Node::Member {
+                    object: Box::new(ident("a")),
+                    field: Ident("b".into())
+                },
+                Node::Turnary {
+                    operand: Box::new(ident("c")),
+                    truth_node: Box::new(Node::Atom(2.0.into())),
+                    false_node: Box::new(Node::Atom(3.0.into())),
+                },
+                op(
+                    Punct::Mul,
+                    op(Punct::Add, Node::Atom(1.0.into()), Node::Atom(2.0.into())),
+                    Node::Atom(3.0.into())
+                ),
+            ])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn empty_array_literal() -> crate::Result<()> {
+        assert_eq!(parse_expr("[]")?, Node::ArrayLit(vec![]));
+        assert_eq!(
+            parse_expr("[[], []]")?,
+            Node::ArrayLit(vec![Node::ArrayLit(vec![]), Node::ArrayLit(vec![])])
+        );
+        assert_eq!(
+            parse_expr("[][0]")?,
+            Node::Index {
+                object: Box::new(Node::ArrayLit(vec![])),
+                index: Box::new(Node::Atom(0.0.into())),
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_array_literals_error() {
+        for src in [
+            "[", "[,", "[1, 2", "[1 2]", "[1, 2]]", "[,]", "1, 2", "a[1, 2]",
+        ] {
+            assert!(parse_expr(src).is_err(), "{src} should not parse");
+        }
     }
 }

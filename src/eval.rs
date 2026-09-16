@@ -139,6 +139,11 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
             crate::lex::Atom::NumLit(n) => Ok(Value::Number(n)),
             crate::lex::Atom::BoolLit(b) => Ok(Value::Bool(b)),
         },
+        Node::ArrayLit(arr) => Ok(Value::Array(Array(
+            arr.into_iter()
+                .map(|v| eval(v, env))
+                .collect::<Result<Vec<_>, _>>()?,
+        ))),
         Node::Turnary {
             operand,
             truth_node,
@@ -391,6 +396,17 @@ mod tests {
             json!({"a": "tok_1", "b": 2}).into()
         );
         assert_eq!(ev("[1, payment.token]"), json!([1, "tok_1"]).into());
+    }
+
+    #[test]
+    fn array_literals_can_be_indexed_and_compared() {
+        assert_eq!(ev("[[1, 2], [3]][0][1]"), json!(2).into());
+        assert_eq!(
+            ev("[params.first_name, payment.nope, 1 + 1]"),
+            json!(["John", null, 2]).into()
+        );
+        assert_eq!(ev("[1, 2][5]"), Value::Null);
+        assert_eq!(ev("[1, \"a\"] == [1, \"a\"]"), Value::Bool(true));
     }
 
     #[test]
