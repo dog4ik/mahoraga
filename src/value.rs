@@ -64,7 +64,7 @@ impl Value {
     pub fn truthy(&self) -> bool {
         match self {
             Value::String(s) => !s.is_empty(),
-            Value::Number(n) => *n > 0.,
+            Value::Number(n) => *n != 0.,
             Value::Bool(b) => *b,
             Value::Null => false,
             Self::Object(Object(obj)) => !obj.is_empty(),
@@ -115,7 +115,7 @@ impl Value {
             (Value::Bool(s), Value::Bool(o)) => *s == o,
             (Value::Null, Value::Null) => true,
             (Value::Array(Array(s)), Value::Array(Array(o))) => *s == o,
-            _ => return Err(crate::Error::new("unsupported eq operands")),
+            _ => false,
         }))
     }
 }

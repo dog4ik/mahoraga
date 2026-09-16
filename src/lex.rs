@@ -40,6 +40,8 @@ pub enum Punct {
     Div,
     OpenParen,
     CloseParen,
+    OpenBracket,
+    CloseBracket,
     Coalesce,
     Question,
     Colon,
@@ -110,24 +112,40 @@ macro_rules! punct_tok {
     ("&&") => {
         Tok::Punct(Punct::And)
     };
+    ("[") => {
+        Tok::Punct(Punct::OpenBracket)
+    };
+    ("]") => {
+        Tok::Punct(Punct::CloseBracket)
+    };
 }
 
 impl Punct {
     pub fn infix_binding_power(&self) -> Option<(u8, u8)> {
         match self {
             Punct::Pipe => Some((1, 2)),
-            Punct::Question => Some((3, 4)),
-            Punct::More | Punct::MoreOrEq | Punct::Less | Punct::LessOrEq => Some((5, 6)),
-            Punct::Add | Punct::Sub => Some((6, 7)),
-            Punct::Mul | Punct::Div => Some((8, 9)),
-            Punct::Dot => Some((11, 12)),
+            Punct::Question => Some((4, 3)),
+            Punct::Coalesce | Punct::Or => Some((5, 6)),
+            Punct::And => Some((7, 8)),
+            Punct::More | Punct::MoreOrEq | Punct::Less | Punct::LessOrEq | Punct::CmpEqual => {
+                Some((9, 10))
+            }
+            Punct::Add | Punct::Sub => Some((11, 12)),
+            Punct::Mul | Punct::Div => Some((13, 14)),
+            _ => None,
+        }
+    }
+
+    pub fn postfix_binding_power(&self) -> Option<(u8, ())> {
+        match self {
+            Punct::Dot | Punct::OpenBracket => Some((16, ())),
             _ => None,
         }
     }
 
     pub fn prefix_binding_power(&self) -> Option<((), u8)> {
         match self {
-            Punct::Add | Punct::Sub => Some(((), 10)),
+            Punct::Add | Punct::Sub => Some(((), 15)),
             _ => None,
         }
     }
@@ -154,6 +172,8 @@ impl Display for Punct {
             Punct::CmpEqual => f.write_str("=="),
             Punct::Or => f.write_str("||"),
             Punct::And => f.write_str("&&"),
+            Punct::OpenBracket => f.write_char('['),
+            Punct::CloseBracket => f.write_char(']'),
         }
     }
 }
@@ -218,7 +238,7 @@ impl FromStr for Ident {
     }
 }
 
-const IMPLICIT_SEPARATORS: &[u8] = b")+-/*|";
+const IMPLICIT_SEPARATORS: &[u8] = b")+-/*|&[]";
 
 #[derive(Debug)]
 pub struct Lexer {
@@ -265,6 +285,14 @@ fn tokenize(input: &str) -> crate::Result<Vec<Token>> {
                 i += 1;
                 Tok::Punct(Punct::CloseParen)
             }
+            b'[' => {
+                i += 1;
+                Tok::Punct(Punct::OpenBracket)
+            }
+            b']' => {
+                i += 1;
+                Tok::Punct(Punct::CloseBracket)
+            }
             b':' => {
                 i += 1;
                 Tok::Punct(Punct::Colon)
@@ -275,7 +303,21 @@ fn tokenize(input: &str) -> crate::Result<Vec<Token>> {
             }
             b'|' => {
                 i += 1;
-                Tok::Punct(Punct::Pipe)
+                if bytes.get(i).is_some_and(|&b| b == b'|') {
+                    i += 1;
+                    Tok::Punct(Punct::Or)
+                } else {
+                    Tok::Punct(Punct::Pipe)
+                }
+            }
+            b'&' => {
+                i += 1;
+                if bytes.get(i).is_some_and(|&b| b == b'&') {
+                    i += 1;
+                    Tok::Punct(Punct::And)
+                } else {
+                    return Err(Error::new_with_span("expected second &", current_span(i)));
+                }
             }
             b'>' => {
                 i += 1;
@@ -475,6 +517,13 @@ impl Lexer {
             ));
         }
         Ok(token.clone())
+    }
+
+    pub fn expect_eof(&mut self) -> crate::Result<()> {
+        match self.advance() {
+            Some(tok) => Err(Error::new(format!("expected eof, got {tok}"))),
+            None => Ok(()),
+        }
     }
 
     pub fn peek(&self) -> Option<Token> {
