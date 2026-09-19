@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{
     Error,
     lex::{Atom, Ident, Lexer, Punct, Tok, Token},
@@ -21,6 +23,7 @@ pub enum Node {
         index: Box<Node>,
     },
     ArrayLit(Vec<Node>),
+    ObjectLit(HashMap<String, Node>),
     Atom(Atom),
 }
 
@@ -47,7 +50,7 @@ impl Parser {
                 tok: Tok::Punct(Punct::OpenBracket),
                 ..
             }) => {
-                let mut args = Vec::new();
+                let mut elements = Vec::new();
                 if !matches!(
                     self.lex.peek(),
                     Some(Token {
@@ -55,18 +58,71 @@ impl Parser {
                         ..
                     })
                 ) {
-                    args.push(self.parse_expr(0)?);
+                    elements.push(self.parse_expr(0)?);
                     while let Some(Token {
                         tok: punct_tok!(","),
                         ..
                     }) = self.lex.peek()
                     {
                         self.lex.advance();
-                        args.push(self.parse_expr(0)?);
+                        elements.push(self.parse_expr(0)?);
                     }
                 }
                 self.lex.expect_next(Tok::Punct(Punct::CloseBracket))?;
-                Node::ArrayLit(args)
+                Node::ArrayLit(elements)
+            }
+
+            Some(Token {
+                tok: Tok::Punct(Punct::OpenBrace),
+                ..
+            }) => {
+                // TODO: dup key errors
+                let mut entries = HashMap::new();
+                if !matches!(
+                    self.lex.peek(),
+                    Some(Token {
+                        tok: punct_tok!("}"),
+                        ..
+                    })
+                ) {
+                    let key = match self.lex.advance() {
+                        Some(Token {
+                            tok: Tok::Atom(Atom::StrLit(s)),
+                            ..
+                        }) => s,
+                        rest => {
+                            return Err(Error::new(format!(
+                                "map key must be string literal, got {rest:?}"
+                            )));
+                        }
+                    };
+                    self.lex.expect_next(punct_tok!(":"))?;
+                    let value = self.parse_expr(0)?;
+                    entries.insert(key, value);
+                    while let Some(Token {
+                        tok: punct_tok!(","),
+                        ..
+                    }) = self.lex.peek()
+                    {
+                        self.lex.advance();
+                        let key = match self.lex.advance() {
+                            Some(Token {
+                                tok: Tok::Atom(Atom::StrLit(s)),
+                                ..
+                            }) => s,
+                            rest => {
+                                return Err(Error::new(format!(
+                                    "map key must be string literal, got {rest:?}"
+                                )));
+                            }
+                        };
+                        self.lex.expect_next(punct_tok!(":"))?;
+                        let value = self.parse_expr(0)?;
+                        entries.insert(key, value);
+                    }
+                }
+                self.lex.expect_next(Tok::Punct(Punct::CloseBrace))?;
+                Node::ObjectLit(entries)
             }
             Some(Token {
                 tok: Tok::Punct(p @ (Punct::Add | Punct::Sub)),
@@ -406,5 +462,22 @@ mod tests {
         ] {
             assert!(parse_expr(src).is_err(), "{src} should not parse");
         }
+    }
+
+    #[test]
+    fn multiline_object_lit() -> crate::Result<()> {
+        assert_eq!(
+            parse_expr(
+                r#"{
+"foo": "bar",
+"baz": 43
+}"#
+            )?,
+            Node::ObjectLit(HashMap::from_iter([
+                ("foo".into(), Node::Atom(Atom::StrLit("bar".into()))),
+                ("baz".into(), Node::Atom(Atom::NumLit(43.)))
+            ]))
+        );
+        Ok(())
     }
 }

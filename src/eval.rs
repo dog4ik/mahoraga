@@ -144,6 +144,11 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
                 .map(|v| eval(v, env))
                 .collect::<Result<Vec<_>, _>>()?,
         ))),
+        Node::ObjectLit(map) => Ok(Value::Object(Object(
+            map.into_iter()
+                .map(|(k, v)| Ok((k, eval(v, env)?)))
+                .collect::<Result<_, _>>()?,
+        ))),
         Node::Turnary {
             operand,
             truth_node,
@@ -161,23 +166,21 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
             match object {
                 Value::Object(Object(object)) => {
                     let index = eval(*index, env)?;
-                    let index = match index {
-                        Value::String(s) => s,
-                        _ => return Err(Error::new("object can be only indexed by string")),
-                    };
-                    Ok(object.get(&index).cloned().unwrap_or(Value::Null))
+                    match index {
+                        Value::String(s) => Ok(object.get(&s).cloned().unwrap_or(Value::Null)),
+                        Value::Null => Ok(Value::Null),
+                        _ => Err(Error::new("object can be only indexed by string")),
+                    }
                 }
                 Value::Array(Array(array)) => {
                     let index = eval(*index, env)?;
-                    let index = match index {
-                        Value::Number(n) if n >= 0. && n.fract() == 0. => n as usize,
-                        _ => {
-                            return Err(Error::new(
-                                "array can be only indexed by unsigned integer",
-                            ));
+                    match index {
+                        Value::Number(n) if n >= 0. && n.fract() == 0. => {
+                            Ok(array.get(n as usize).cloned().unwrap_or(Value::Null))
                         }
-                    };
-                    Ok(array.get(index).cloned().unwrap_or(Value::Null))
+                        Value::Null => Ok(Value::Null),
+                        _ => Err(Error::new("array can be only indexed by unsigned integer")),
+                    }
                 }
                 _ => Err(crate::Error::new(format!(
                     "only array or object can be indexed, got {object:?}"
@@ -392,10 +395,18 @@ mod tests {
     #[test]
     fn object_and_array_literals_evaluate() {
         assert_eq!(
-            ev("{a: payment.token, b: 2}"),
+            ev("{\"a\": payment.token, \"b\": 2}"),
             json!({"a": "tok_1", "b": 2}).into()
         );
         assert_eq!(ev("[1, payment.token]"), json!([1, "tok_1"]).into());
+    }
+
+    #[test]
+    fn object_null_index_should_produce_null() {
+        assert_eq!(
+            ev("{\"a\": payment.token, \"b\": 2}[null]"),
+            json!(null).into()
+        );
     }
 
     #[test]
@@ -412,5 +423,10 @@ mod tests {
     #[test]
     fn unfinished_expr_errors() {
         assert_matches!(eval_str("payment[\"test\"]]"), Err(_));
+    }
+
+    #[test]
+    fn top_level_resolution() {
+        assert_eq!(ev("(nope || payment).token"), Value::String("tok_1".into()));
     }
 }

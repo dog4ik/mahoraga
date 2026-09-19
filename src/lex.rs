@@ -42,6 +42,8 @@ pub enum Punct {
     CloseParen,
     OpenBracket,
     CloseBracket,
+    OpenBrace,
+    CloseBrace,
     Coalesce,
     Question,
     Colon,
@@ -119,6 +121,12 @@ macro_rules! punct_tok {
     ("]") => {
         Tok::Punct(Punct::CloseBracket)
     };
+    ("{") => {
+        Tok::Punct(Punct::OpenBrace)
+    };
+    ("}") => {
+        Tok::Punct(Punct::CloseBrace)
+    };
     (",") => {
         Tok::Punct(Punct::Comma)
     };
@@ -178,6 +186,8 @@ impl Display for Punct {
             Punct::And => f.write_str("&&"),
             Punct::OpenBracket => f.write_char('['),
             Punct::CloseBracket => f.write_char(']'),
+            Punct::OpenBrace => f.write_char('{'),
+            Punct::CloseBrace => f.write_char('}'),
             Punct::Comma => f.write_char(','),
         }
     }
@@ -243,7 +253,7 @@ impl FromStr for Ident {
     }
 }
 
-const IMPLICIT_SEPARATORS: &[u8] = b")+-/*|&[],";
+const IMPLICIT_SEPARATORS: &[u8] = b")+-/*|&[]{},:?";
 
 #[derive(Debug)]
 pub struct Lexer {
@@ -297,6 +307,14 @@ fn tokenize(input: &str) -> crate::Result<Vec<Token>> {
             b']' => {
                 i += 1;
                 Tok::Punct(Punct::CloseBracket)
+            }
+            b'{' => {
+                i += 1;
+                Tok::Punct(Punct::OpenBrace)
+            }
+            b'}' => {
+                i += 1;
+                Tok::Punct(Punct::CloseBrace)
             }
             b':' => {
                 i += 1;
@@ -448,7 +466,8 @@ fn tokenize(input: &str) -> crate::Result<Vec<Token>> {
                     Tok::Atom(Atom::Ident(Ident(slice.to_string())))
                 }
             }
-            b'"' => {
+            b'"' | b'\'' => {
+                let str_quote = character;
                 i += 1;
                 let mut s = Vec::new();
                 loop {
@@ -458,12 +477,18 @@ fn tokenize(input: &str) -> crate::Result<Vec<Token>> {
                             current_span(i),
                         ));
                     };
-                    if c == b'"' {
+                    if c == str_quote {
                         i += 1;
                         break;
                     }
                     if c == b'\\' {
-                        let next = bytes[i + 1];
+                        let Some(&next) = bytes.get(i + 1) else {
+                            return Err(Error::new_with_span(
+                                "unclosed string literal",
+                                current_span(i),
+                            ));
+                        };
+
                         s.push(next);
                         i += 2;
                     } else {
@@ -693,6 +718,54 @@ mod tests {
     #[test]
     fn invalid_literal() -> crate::Result<()> {
         assert_matches!(tokenize(r#"""#), Err(_));
+        Ok(())
+    }
+
+    #[test]
+    fn single_quote_literal() -> crate::Result<()> {
+        assert_eq!(
+            tokenize(r#"'hello'"#)?,
+            vec![Token {
+                tok: Tok::Atom(Atom::StrLit(String::from("hello"))),
+                span: Span { start: 0, end: 7 }
+            }]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn mixed_quote_literal_fails() -> crate::Result<()> {
+        assert_matches!(tokenize(r#"'hello""#), Err(_));
+        Ok(())
+    }
+
+    #[test]
+    fn single_quote_is_allowed_in_double_quotes() -> crate::Result<()> {
+        assert_eq!(
+            tokenize(r#""he'' ''ll'o""#)?,
+            vec![Token {
+                tok: Tok::Atom(Atom::StrLit(String::from(r#"he'' ''ll'o"#))),
+                span: Span { start: 0, end: 13 }
+            }]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn double_quote_is_allowed_in_single_quotes() -> crate::Result<()> {
+        assert_eq!(
+            tokenize(r#"'"test" " test"'"#)?,
+            vec![Token {
+                tok: Tok::Atom(Atom::StrLit(String::from(r#""test" " test""#))),
+                span: Span { start: 0, end: 16 }
+            }]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn trailing_escape_fails_gracefully() -> crate::Result<()> {
+        assert_matches!(tokenize(r#""abc\"#), Err(_));
         Ok(())
     }
 
