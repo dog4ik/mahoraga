@@ -40,6 +40,21 @@ mod std_fns {
             _ => Err(Error::new("unexpected data type")),
         }
     }
+
+    pub fn blank_as_null(val: Value) -> crate::Result<Value> {
+        Ok(if val.blank() { Value::Null } else { val })
+    }
+
+    pub fn blank_as_void(val: Value) -> crate::Result<Value> {
+        Ok(if val.blank() { Value::Void } else { val })
+    }
+
+    pub fn void_as_null(val: Value) -> crate::Result<Value> {
+        Ok(match val {
+            Value::Void => Value::Null,
+            _ => val,
+        })
+    }
 }
 
 impl Env {
@@ -56,6 +71,24 @@ impl Env {
                     "lower",
                     PureFunction {
                         f: std_fns::to_lowercase,
+                    },
+                ),
+                (
+                    "void_as_null",
+                    PureFunction {
+                        f: std_fns::void_as_null,
+                    },
+                ),
+                (
+                    "blank_as_null",
+                    PureFunction {
+                        f: std_fns::blank_as_null,
+                    },
+                ),
+                (
+                    "blank_as_void",
+                    PureFunction {
+                        f: std_fns::blank_as_void,
                     },
                 ),
             ]),
@@ -121,7 +154,7 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
             }
             crate::lex::Punct::Coalesce => {
                 let lhs = eval(*lhs, env)?;
-                if lhs == Value::Null {
+                if lhs.nullish() {
                     eval(*rhs, env)
                 } else {
                     Ok(lhs)
@@ -132,7 +165,7 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
         Node::Atom(atom) => match atom {
             crate::lex::Atom::Ident(Ident(i)) => match env.runtime_objects.0.get(&i) {
                 Some(v) => Ok(v.clone()),
-                None => Ok(Value::Null),
+                None => Ok(Value::Void),
                 // None => Err(Error::new("raw idents are not supported yet")),
             },
             crate::lex::Atom::StrLit(s) => Ok(Value::String(s)),
@@ -167,8 +200,8 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
                 Value::Object(Object(object)) => {
                     let index = eval(*index, env)?;
                     match index {
-                        Value::String(s) => Ok(object.get(&s).cloned().unwrap_or(Value::Null)),
-                        Value::Null => Ok(Value::Null),
+                        Value::String(s) => Ok(object.get(&s).cloned().unwrap_or(Value::Void)),
+                        Value::Null | Value::Void => Ok(Value::Void),
                         _ => Err(Error::new("object can be only indexed by string")),
                     }
                 }
@@ -176,9 +209,9 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
                     let index = eval(*index, env)?;
                     match index {
                         Value::Number(n) if n >= 0. && n.fract() == 0. => {
-                            Ok(array.get(n as usize).cloned().unwrap_or(Value::Null))
+                            Ok(array.get(n as usize).cloned().unwrap_or(Value::Void))
                         }
-                        Value::Null => Ok(Value::Null),
+                        Value::Null | Value::Void => Ok(Value::Void),
                         _ => Err(Error::new("array can be only indexed by unsigned integer")),
                     }
                 }
@@ -193,8 +226,8 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
         } => {
             let object = eval(*object, env)?;
             match object {
-                Value::Object(Object(obj)) => Ok(obj.get(&field).cloned().unwrap_or(Value::Null)),
-                Value::Null => Ok(Value::Null),
+                Value::Object(Object(obj)) => Ok(obj.get(&field).cloned().unwrap_or(Value::Void)),
+                Value::Null | Value::Void => Ok(Value::Void),
                 _ => Err(Error::new(format!(
                     "only object can have member access, got {object:?}"
                 ))),
@@ -325,11 +358,16 @@ mod tests {
     }
 
     #[test]
-    fn missing_paths_and_roots_are_null() {
-        assert_eq!(ev("payment.nope"), Value::Null);
-        assert_eq!(ev("payment.nope.deeper"), Value::Null);
-        assert_eq!(ev("nosuchroot.x"), Value::Null);
-        assert_eq!(ev("params.customer[\"3\"]"), Value::Null);
+    fn missing_paths_and_roots_are_void() {
+        assert_eq!(ev("payment.nope"), Value::Void);
+        assert_eq!(ev("payment.nope.deeper"), Value::Void);
+        assert_eq!(ev("nosuchroot.x"), Value::Void);
+        assert_eq!(ev("params.customer[\"3\"]"), Value::Void);
+    }
+
+    #[test]
+    fn null_is_preserved() {
+        assert_eq!(ev("params.phone"), Value::Null);
     }
 
     #[test]
@@ -402,11 +440,8 @@ mod tests {
     }
 
     #[test]
-    fn object_null_index_should_produce_null() {
-        assert_eq!(
-            ev("{\"a\": payment.token, \"b\": 2}[null]"),
-            json!(null).into()
-        );
+    fn object_null_index_should_produce_void() {
+        assert_eq!(ev("{\"a\": payment.token, \"b\": 2}[null]"), Value::Void,);
     }
 
     #[test]
@@ -414,9 +449,14 @@ mod tests {
         assert_eq!(ev("[[1, 2], [3]][0][1]"), json!(2).into());
         assert_eq!(
             ev("[params.first_name, payment.nope, 1 + 1]"),
-            json!(["John", null, 2]).into()
+            // json!(["John", null, 2]).into()
+            Value::Array(Array(vec![
+                Value::String("John".into()),
+                Value::Void,
+                Value::Number(2.)
+            ]))
         );
-        assert_eq!(ev("[1, 2][5]"), Value::Null);
+        assert_eq!(ev("[1, 2][5]"), Value::Void);
         assert_eq!(ev("[1, \"a\"] == [1, \"a\"]"), Value::Bool(true));
     }
 

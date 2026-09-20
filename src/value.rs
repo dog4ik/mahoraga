@@ -6,8 +6,23 @@ pub struct Object(pub HashMap<String, Value>);
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Array(pub Vec<Value>);
 
-/// Runtime value
 #[derive(Debug, Clone, PartialEq)]
+pub enum Number {
+    Float(f64),
+    Int(i64),
+}
+
+impl Display for Number {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Number::Float(n) => write!(f, "{n}"),
+            Number::Int(i) => write!(f, "{i}"),
+        }
+    }
+}
+
+/// Runtime value
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum Value {
     String(String),
     Number(f64),
@@ -15,6 +30,8 @@ pub enum Value {
     Object(Object),
     Array(Array),
     Null,
+    #[default]
+    Void,
 }
 
 impl Display for Value {
@@ -26,6 +43,7 @@ impl Display for Value {
             Value::Object(obj) => write!(f, "{obj:?}"),
             Value::Array(arr) => write!(f, "{arr:?}"),
             Value::Null => write!(f, "null"),
+            Value::Void => write!(f, "void"),
         }
     }
 }
@@ -67,6 +85,7 @@ impl Value {
             Value::Number(n) => *n != 0.,
             Value::Bool(b) => *b,
             Value::Null => false,
+            Value::Void => false,
             Self::Object(Object(obj)) => !obj.is_empty(),
             Self::Array(Array(arr)) => !arr.is_empty(),
         }
@@ -117,6 +136,31 @@ impl Value {
             (Value::Array(Array(s)), Value::Array(Array(o))) => *s == o,
             _ => false,
         }))
+    }
+
+    pub fn nullish(&self) -> bool {
+        matches!(self, Value::Void | Value::Null)
+    }
+
+    pub fn blank(&self) -> bool {
+        match self {
+            Value::String(s) if s.is_empty() => true,
+            Value::Null => true,
+            Value::Void => true,
+            _ => false,
+        }
+    }
+
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            Value::String(_) => "str",
+            Value::Number(_) => "number",
+            Value::Bool(_) => "bool",
+            Value::Object(_) => "object",
+            Value::Array(_) => "array",
+            Value::Null => "null",
+            Value::Void => "void",
+        }
     }
 }
 
