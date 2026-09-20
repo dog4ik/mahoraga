@@ -1,5 +1,9 @@
 [package]
 name = "mahoraga"
+description = "expression language designed for data driven applications"
+license = "MIT OR Apache-2.0"
+keywords = ["expression", "templates"]
+repository = "https://github.com/dog4ik/mahoraga"
 version = "0.1.0"
 edition = "2024"
 
