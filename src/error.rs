@@ -25,6 +25,13 @@ impl Error {
         }
     }
 
+    pub fn new_from_parts(msg: impl Into<String>, span: Option<Span>) -> Self {
+        Self {
+            message: msg.into(),
+            span,
+        }
+    }
+
     pub fn new_with_span(msg: impl Into<String>, span: Span) -> Self {
         Self {
             message: msg.into(),

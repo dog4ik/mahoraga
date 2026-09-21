@@ -22,6 +22,10 @@ pub enum Node {
         object: Box<Node>,
         index: Box<Node>,
     },
+    Call {
+        callee: Box<Node>,
+        args: Vec<Node>,
+    },
     ArrayLit(Vec<Node>),
     ObjectLit(HashMap<String, Node>),
     Atom(Atom),
@@ -33,6 +37,74 @@ struct Parser {
 }
 
 impl Parser {
+    fn parse_comma_separated(&mut self, terminator: Punct) -> crate::Result<Vec<Node>> {
+        let mut items = Vec::new();
+        if !matches!(self.lex.peek(), Some(Token { tok: Tok::Punct(p), .. }) if p == terminator) {
+            items.push(self.parse_expr(0)?);
+            while let Some(Token {
+                tok: punct_tok!(","),
+                ..
+            }) = self.lex.peek()
+            {
+                self.lex.advance();
+                items.push(self.parse_expr(0)?);
+            }
+        }
+        self.lex.expect_next(Tok::Punct(terminator))?;
+        Ok(items)
+    }
+
+    fn parse_object(&mut self) -> crate::Result<Node> {
+        let mut entries = HashMap::new();
+        if !matches!(
+            self.lex.peek(),
+            Some(Token {
+                tok: punct_tok!("}"),
+                ..
+            })
+        ) {
+            let key = match self.lex.advance() {
+                Some(Token {
+                    tok: Tok::Atom(Atom::StrLit(s)),
+                    ..
+                }) => s,
+                rest => {
+                    return Err(Error::new_from_parts(
+                        format!("map key must be string literal, got {rest:?}"),
+                        rest.map(|v| v.span),
+                    ));
+                }
+            };
+            self.lex.expect_next(punct_tok!(":"))?;
+            let value = self.parse_expr(0)?;
+            entries.insert(key, value);
+            while let Some(Token {
+                tok: punct_tok!(","),
+                ..
+            }) = self.lex.peek()
+            {
+                self.lex.advance();
+                let key = match self.lex.advance() {
+                    Some(Token {
+                        tok: Tok::Atom(Atom::StrLit(s)),
+                        ..
+                    }) => s,
+                    rest => {
+                        return Err(Error::new_from_parts(
+                            format!("map key must be string literal, got {rest:?}"),
+                            rest.map(|v| v.span),
+                        ));
+                    }
+                };
+                self.lex.expect_next(punct_tok!(":"))?;
+                let value = self.parse_expr(0)?;
+                entries.insert(key, value);
+            }
+        }
+        self.lex.expect_next(Tok::Punct(Punct::CloseBrace))?;
+        Ok(Node::ObjectLit(entries))
+    }
+
     pub fn parse_expr(&mut self, min_bind_power: u8) -> crate::Result<Node> {
         let mut lhs = match self.lex.advance() {
             Some(Token {
@@ -49,93 +121,25 @@ impl Parser {
             Some(Token {
                 tok: Tok::Punct(Punct::OpenBracket),
                 ..
-            }) => {
-                let mut elements = Vec::new();
-                if !matches!(
-                    self.lex.peek(),
-                    Some(Token {
-                        tok: punct_tok!("]"),
-                        ..
-                    })
-                ) {
-                    elements.push(self.parse_expr(0)?);
-                    while let Some(Token {
-                        tok: punct_tok!(","),
-                        ..
-                    }) = self.lex.peek()
-                    {
-                        self.lex.advance();
-                        elements.push(self.parse_expr(0)?);
-                    }
-                }
-                self.lex.expect_next(Tok::Punct(Punct::CloseBracket))?;
-                Node::ArrayLit(elements)
-            }
+            }) => Node::ArrayLit(self.parse_comma_separated(Punct::CloseBracket)?),
 
             Some(Token {
                 tok: Tok::Punct(Punct::OpenBrace),
                 ..
-            }) => {
-                // TODO: dup key errors
-                let mut entries = HashMap::new();
-                if !matches!(
-                    self.lex.peek(),
-                    Some(Token {
-                        tok: punct_tok!("}"),
-                        ..
-                    })
-                ) {
-                    let key = match self.lex.advance() {
-                        Some(Token {
-                            tok: Tok::Atom(Atom::StrLit(s)),
-                            ..
-                        }) => s,
-                        rest => {
-                            return Err(Error::new(format!(
-                                "map key must be string literal, got {rest:?}"
-                            )));
-                        }
-                    };
-                    self.lex.expect_next(punct_tok!(":"))?;
-                    let value = self.parse_expr(0)?;
-                    entries.insert(key, value);
-                    while let Some(Token {
-                        tok: punct_tok!(","),
-                        ..
-                    }) = self.lex.peek()
-                    {
-                        self.lex.advance();
-                        let key = match self.lex.advance() {
-                            Some(Token {
-                                tok: Tok::Atom(Atom::StrLit(s)),
-                                ..
-                            }) => s,
-                            rest => {
-                                return Err(Error::new(format!(
-                                    "map key must be string literal, got {rest:?}"
-                                )));
-                            }
-                        };
-                        self.lex.expect_next(punct_tok!(":"))?;
-                        let value = self.parse_expr(0)?;
-                        entries.insert(key, value);
-                    }
-                }
-                self.lex.expect_next(Tok::Punct(Punct::CloseBrace))?;
-                Node::ObjectLit(entries)
-            }
+            }) => self.parse_object()?,
             Some(Token {
                 tok: Tok::Punct(p @ (Punct::Add | Punct::Sub)),
                 ..
             }) => {
-                let ((), r_bp) = p.prefix_binding_power().expect("add has prefix bp");
+                let ((), r_bp) = p.prefix_binding_power().expect("add/sub has prefix bp");
                 let rhs = self.parse_expr(r_bp)?;
                 Node::Op((p, (Box::new(Node::Atom(0.0.into())), Box::new(rhs))))
             }
             rest => {
-                return Err(Error::new(format!(
-                    "bad token, expected atom, got {rest:?}"
-                )));
+                return Err(Error::new_from_parts(
+                    format!("bad token, expected atom, got {rest:?}"),
+                    rest.map(|v| v.span),
+                ));
             }
         };
 
@@ -144,7 +148,12 @@ impl Parser {
                 Some(Token {
                     tok: Tok::Punct(p), ..
                 }) => p,
-                Some(t) => return Err(Error::new(format!("expected punct token, got {t}"))),
+                Some(t) => {
+                    return Err(Error::new_with_span(
+                        format!("expected punct token, got {t}"),
+                        t.span,
+                    ));
+                }
                 None => break,
             };
 
@@ -164,6 +173,13 @@ impl Parser {
                         }
                     }
 
+                    Punct::OpenParen => {
+                        lhs = Node::Call {
+                            callee: Box::new(lhs),
+                            args: self.parse_comma_separated(Punct::CloseParen)?,
+                        }
+                    }
+
                     Punct::Dot => match self.lex.advance() {
                         Some(Token {
                             tok: Tok::Atom(Atom::Ident(field)),
@@ -175,9 +191,10 @@ impl Parser {
                             }
                         }
                         rest => {
-                            return Err(Error::new(format!(
-                                "expected member accessor, got: {rest:?}"
-                            )));
+                            return Err(Error::new_from_parts(
+                                format!("expected member accessor, got: {rest:?}"),
+                                rest.map(|v| v.span),
+                            ));
                         }
                     },
                     _ => unreachable!("all postfix operators must be handled, got '{punct}'"),
@@ -479,5 +496,135 @@ mod tests {
             ]))
         );
         Ok(())
+    }
+
+    fn call(callee: Node, args: Vec<Node>) -> Node {
+        Node::Call {
+            callee: Box::new(callee),
+            args,
+        }
+    }
+
+    #[test]
+    fn fn_call() -> crate::Result<()> {
+        assert_eq!(
+            parse_expr(r#"foo(1.0, "baz")"#)?,
+            call(
+                ident("foo"),
+                vec![Node::Atom(1.0.into()), Node::Atom("baz".into())]
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn empty_arguments_list() -> crate::Result<()> {
+        assert_eq!(parse_expr("foo()")?, call(ident("foo"), vec![]));
+        assert_eq!(
+            parse_expr("foo(bar())")?,
+            call(ident("foo"), vec![call(ident("bar"), vec![])])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn arguments_are_full_expressions() -> crate::Result<()> {
+        assert_eq!(
+            parse_expr("foo(a.b, c ? 1 : 2, (1 + 2) * 3, [4], bar(5))")?,
+            call(
+                ident("foo"),
+                vec![
+                    Node::Member {
+                        object: Box::new(ident("a")),
+                        field: Ident("b".into())
+                    },
+                    Node::Turnary {
+                        operand: Box::new(ident("c")),
+                        truth_node: Box::new(Node::Atom(1.0.into())),
+                        false_node: Box::new(Node::Atom(2.0.into())),
+                    },
+                    op(
+                        Punct::Mul,
+                        op(Punct::Add, Node::Atom(1.0.into()), Node::Atom(2.0.into())),
+                        Node::Atom(3.0.into())
+                    ),
+                    Node::ArrayLit(vec![Node::Atom(4.0.into())]),
+                    call(ident("bar"), vec![Node::Atom(5.0.into())]),
+                ]
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn calls_chain_with_member_and_index() -> crate::Result<()> {
+        assert_eq!(
+            parse_expr("a.b(1)[0](2)")?,
+            call(
+                Node::Index {
+                    object: Box::new(call(
+                        Node::Member {
+                            object: Box::new(ident("a")),
+                            field: Ident("b".into())
+                        },
+                        vec![Node::Atom(1.0.into())]
+                    )),
+                    index: Box::new(Node::Atom(0.0.into()))
+                },
+                vec![Node::Atom(2.0.into())]
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn call_binds_tighter_than_operators() -> crate::Result<()> {
+        assert_eq!(
+            parse_expr("1 + foo(2) * 3")?,
+            op(
+                Punct::Add,
+                Node::Atom(1.0.into()),
+                op(
+                    Punct::Mul,
+                    call(ident("foo"), vec![Node::Atom(2.0.into())]),
+                    Node::Atom(3.0.into())
+                )
+            )
+        );
+        assert_eq!(
+            parse_expr("-foo(2)")?,
+            op(
+                Punct::Sub,
+                Node::Atom(0.0.into()),
+                call(ident("foo"), vec![Node::Atom(2.0.into())])
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn call_is_piped_into() -> crate::Result<()> {
+        assert_eq!(
+            parse_expr("a | join(\' \') | trim")?,
+            op(
+                Punct::Pipe,
+                op(
+                    Punct::Pipe,
+                    ident("a"),
+                    call(ident("join"), vec![Node::Atom(" ".into())])
+                ),
+                ident("trim")
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_arguments_list_errors() {
+        for src in [
+            "foo(", "foo(1", "foo(1 2)", "foo(1,)", "foo(,)", "foo(,1)", "foo(1))", "foo(1;2)",
+        ] {
+            assert!(parse_expr(src).is_err(), "{src} should not parse");
+        }
     }
 }

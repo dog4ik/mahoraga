@@ -150,7 +150,7 @@ impl Punct {
 
     pub fn postfix_binding_power(&self) -> Option<(u8, ())> {
         match self {
-            Punct::Dot | Punct::OpenBracket => Some((16, ())),
+            Punct::Dot | Punct::OpenBracket | Punct::OpenParen => Some((16, ())),
             _ => None,
         }
     }
@@ -253,7 +253,7 @@ impl FromStr for Ident {
     }
 }
 
-const IMPLICIT_SEPARATORS: &[u8] = b")+-/*|&[]{},:?";
+const IMPLICIT_SEPARATORS: &[u8] = b"()+-/*|&[]{},:?<>=\"'";
 
 #[derive(Debug)]
 pub struct Lexer {
@@ -555,7 +555,10 @@ impl Lexer {
 
     pub fn expect_eof(&mut self) -> crate::Result<()> {
         match self.advance() {
-            Some(tok) => Err(Error::new(format!("expected eof, got {tok}"))),
+            Some(tok) => Err(Error::new_with_span(
+                format!("expected eof, got {tok}"),
+                tok.span,
+            )),
             None => Ok(()),
         }
     }
@@ -612,6 +615,26 @@ mod tests {
     #[test]
     fn invalid_number() -> crate::Result<()> {
         assert_matches!(tokenize("10.039300."), Err(_));
+        Ok(())
+    }
+
+    #[test]
+    fn atoms_end_on_implicit_separators() -> crate::Result<()> {
+        assert_eq!(
+            tokenize("foo(1)")?
+                .into_iter()
+                .map(|t| t.tok)
+                .collect::<Vec<_>>(),
+            vec![
+                Tok::Atom(Atom::Ident(Ident("foo".into()))),
+                punct_tok!("("),
+                Tok::Atom(Atom::NumLit(1.)),
+                punct_tok!(")"),
+            ]
+        );
+        for src in ["a>b", "a<b", "a==b", "a>=1", "1<b"] {
+            assert_eq!(tokenize(src)?.len(), 3, "{src} should lex as 3 tokens");
+        }
         Ok(())
     }
 

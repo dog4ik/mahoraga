@@ -233,6 +233,7 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
                 ))),
             }
         }
+        Node::Call { .. } => todo!("function calls are not evaluated yet"),
     }
 }
 
