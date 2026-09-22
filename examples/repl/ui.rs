@@ -51,7 +51,7 @@ fn render_history(frame: &mut Frame, app: &App, area: Rect) {
 fn render_input(frame: &mut Frame, app: &App, area: Rect) {
     let (color, title) = match &app.preview {
         None => (Color::Gray, " input ".to_string()),
-        Some(Ok(value)) => (Color::LightGreen, format!(" = {value} ")),
+        Some(Ok(value)) => (Color::LightGreen, format!(" = {value:?} ")),
         Some(Err(err)) => (Color::LightRed, format!(" error: {err} ")),
     };
 

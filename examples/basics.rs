@@ -1,10 +1,6 @@
-# Mahoraga
-
-Small WIP expression language
-
-## Usage example
-
-```rust
+fn my_custom_fn(s: String, n: usize) -> mahoraga::Result<mahoraga::Value> {
+    Ok(std::iter::repeat_n(s, n).collect::<String>().into())
+}
 
 fn main() {
     let mut env = mahoraga::Env::default();
@@ -13,15 +9,9 @@ fn main() {
         mahoraga::Value::Number(11.)
     );
 
-
-    // Define custom functions
-    fn my_custom_fn(s: String, n: usize) -> mahoraga::Result<mahoraga::Value> {
-        Ok(std::iter::repeat_n(s, n).collect::<String>().into())
-    }
-
     env.fns.extend([mahoraga::declare_fn!(
         my_custom_fn(String, usize),
-        "My custom function description!"
+        "My custom function!"
     )]);
 
     assert_eq!(
@@ -29,4 +19,3 @@ fn main() {
         "testtest".into(),
     );
 }
-```

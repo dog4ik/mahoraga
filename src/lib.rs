@@ -10,8 +10,12 @@ pub use lex::{Atom, Ident, Punct};
 pub use span::Span;
 pub type Result<T> = std::result::Result<T, Error>;
 pub use eval::Env;
-pub use eval::PureFunction;
 pub use eval::eval;
+pub use eval::fns::{Args, Callable, Function};
 pub use parser::Node;
 pub use parser::parse_expr;
 pub use value::Value;
+
+pub fn eval_str(s: &str, env: &Env) -> crate::Result<Value> {
+    eval(parse_expr(s)?, env)
+}

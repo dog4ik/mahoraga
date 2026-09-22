@@ -1,97 +1,26 @@
-use std::{collections::HashMap, f64::consts};
+use std::{collections::HashMap, f64::consts, rc::Rc};
 
 use crate::{
     Error,
+    eval::fns::{Args, Function},
     lex::{Atom, Ident},
     parser::Node,
     value::{Array, Object, Value},
 };
 
-#[derive(Debug)]
-pub struct PureFunction {
-    f: fn(val: Value) -> crate::Result<Value>,
-}
-
-impl PureFunction {
-    pub fn new(f: fn(val: Value) -> crate::Result<Value>) -> Self {
-        Self { f }
-    }
-}
+pub mod fns;
+pub mod std_fns;
 
 #[derive(Debug, Default)]
 pub struct Env {
-    pub fns: HashMap<&'static str, PureFunction>,
+    pub fns: HashMap<&'static str, Rc<Function>>,
     pub runtime_objects: Object,
-}
-
-mod std_fns {
-    use crate::{Error, value::Value};
-
-    pub fn to_uppercase(val: Value) -> crate::Result<Value> {
-        match val {
-            Value::String(s) => Ok(Value::String(s.to_uppercase())),
-            _ => Err(Error::new("unexpected data type")),
-        }
-    }
-
-    pub fn to_lowercase(val: Value) -> crate::Result<Value> {
-        match val {
-            Value::String(s) => Ok(Value::String(s.to_lowercase())),
-            _ => Err(Error::new("unexpected data type")),
-        }
-    }
-
-    pub fn blank_as_null(val: Value) -> crate::Result<Value> {
-        Ok(if val.blank() { Value::Null } else { val })
-    }
-
-    pub fn blank_as_void(val: Value) -> crate::Result<Value> {
-        Ok(if val.blank() { Value::Void } else { val })
-    }
-
-    pub fn void_as_null(val: Value) -> crate::Result<Value> {
-        Ok(match val {
-            Value::Void => Value::Null,
-            _ => val,
-        })
-    }
 }
 
 impl Env {
     pub fn std() -> Self {
         Self {
-            fns: HashMap::from_iter([
-                (
-                    "upper",
-                    PureFunction {
-                        f: std_fns::to_uppercase,
-                    },
-                ),
-                (
-                    "lower",
-                    PureFunction {
-                        f: std_fns::to_lowercase,
-                    },
-                ),
-                (
-                    "void_as_null",
-                    PureFunction {
-                        f: std_fns::void_as_null,
-                    },
-                ),
-                (
-                    "blank_as_null",
-                    PureFunction {
-                        f: std_fns::blank_as_null,
-                    },
-                ),
-                (
-                    "blank_as_void",
-                    PureFunction {
-                        f: std_fns::blank_as_void,
-                    },
-                ),
-            ]),
+            fns: std_fns::std_fns(),
             runtime_objects: Object(HashMap::from_iter([(
                 String::from("constants"),
                 Value::Object(Object(HashMap::from_iter([
@@ -142,15 +71,19 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
             }
             crate::lex::Punct::Pipe => {
                 let lhs = eval(*lhs, env)?;
-                let ident = match *rhs {
-                    Node::Atom(Atom::Ident(Ident(ident))) => ident,
-                    _ => return Err(Error::new("rhs of pipe should be ident")),
+                // `x | f` and `x | f(a, b)` both mean "call f with x first".
+                let (callee, rest) = match *rhs {
+                    Node::Call { callee, args } => (*callee, args),
+                    node => (node, Vec::new()),
                 };
-                let f = env
-                    .fns
-                    .get(ident.as_str())
-                    .ok_or_else(|| Error::new("could not find function"))?;
-                (f.f)(lhs)
+                let name = callee_name(&callee).map(String::from);
+                let callee = eval(callee, env)?;
+                let mut values = Vec::with_capacity(rest.len() + 1);
+                values.push(lhs);
+                for arg in rest {
+                    values.push(eval(arg, env)?);
+                }
+                call_value(callee, Args(values), name.as_deref())
             }
             crate::lex::Punct::Coalesce => {
                 let lhs = eval(*lhs, env)?;
@@ -163,10 +96,14 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
             _ => Err(Error::new(format!("can't eval {punct}"))),
         },
         Node::Atom(atom) => match atom {
+            // Attached scope shadows the function registry, so a payload field never gets
+            // swallowed by a function of the same name.
             crate::lex::Atom::Ident(Ident(i)) => match env.runtime_objects.0.get(&i) {
                 Some(v) => Ok(v.clone()),
-                None => Ok(Value::Void),
-                // None => Err(Error::new("raw idents are not supported yet")),
+                None => match env.fns.get(i.as_str()) {
+                    Some(f) => Ok(Value::Function(f.clone())),
+                    None => Ok(Value::Void),
+                },
             },
             crate::lex::Atom::StrLit(s) => Ok(Value::String(s)),
             crate::lex::Atom::NumLit(n) => Ok(Value::Number(n)),
@@ -180,7 +117,7 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
         Node::ObjectLit(map) => Ok(Value::Object(Object(
             map.into_iter()
                 .map(|(k, v)| Ok((k, eval(v, env)?)))
-                .collect::<Result<_, _>>()?,
+                .collect::<crate::Result<_>>()?,
         ))),
         Node::Turnary {
             operand,
@@ -233,7 +170,43 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
                 ))),
             }
         }
-        Node::Call { .. } => todo!("function calls are not evaluated yet"),
+        Node::Call { callee, args } => {
+            let name = callee_name(&callee).map(String::from);
+            let callee = eval(*callee, env)?;
+            let args = Args(
+                args.into_iter()
+                    .map(|v| eval(v, env))
+                    .collect::<crate::Result<Vec<_>>>()?,
+            );
+            call_value(callee, args, name.as_deref())
+        }
+    }
+}
+
+/// The name a callee was written as, kept only so a failed call can say which one it was.
+fn callee_name(node: &Node) -> Option<&str> {
+    match node {
+        Node::Atom(Atom::Ident(Ident(name))) => Some(name),
+        Node::Member {
+            field: Ident(f), ..
+        } => Some(f),
+        _ => None,
+    }
+}
+
+fn call_value(callee: Value, args: Args, name: Option<&str>) -> crate::Result<Value> {
+    match callee {
+        Value::Function(f) => f.call(args),
+        // An unresolved ident evaluates to void like any other missing lookup, so name it here
+        // rather than reporting a bare type mismatch.
+        Value::Void => Err(Error::new(match name {
+            Some(name) => format!("function '{name}' is not found"),
+            None => String::from("only functions can be called, got void"),
+        })),
+        _ => Err(Error::new(format!(
+            "only functions can be called, got {}",
+            callee.value_type()
+        ))),
     }
 }
 
@@ -244,7 +217,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::{parser::parse_expr, span::Span};
+    use crate::{parser::parse_expr, span::Span, value::ValueType};
 
     fn eval(node: Node) -> crate::Result<Value> {
         let env = Env::std();
@@ -459,6 +432,72 @@ mod tests {
         );
         assert_eq!(ev("[1, 2][5]"), Value::Void);
         assert_eq!(ev("[1, \"a\"] == [1, \"a\"]"), Value::Bool(true));
+    }
+
+    #[test]
+    fn calls_and_pipes_resolve_the_same_function() {
+        assert_eq!(ev("to_uppercase(params.first_name)"), json!("JOHN").into());
+        assert_eq!(ev("params.first_name | to_uppercase"), json!("JOHN").into());
+        assert_eq!(
+            ev("params.first_name | to_uppercase | to_lowercase"),
+            json!("john").into()
+        );
+    }
+
+    #[test]
+    fn unknown_function_errors() {
+        let err = eval_str("params.first_name | nope").unwrap_err();
+        assert!(
+            err.message.contains("'nope' is not found"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn functions_are_values() {
+        assert_matches!(ev("to_uppercase"), Value::Function(_));
+        assert_eq!(ev("to_uppercase").value_type(), ValueType::Function);
+        assert_eq!(ev("to_uppercase").to_string(), "fn to_uppercase/1");
+        assert_eq!(ev("to_uppercase == to_uppercase"), Value::Bool(true));
+        assert_eq!(ev("to_uppercase == to_lowercase"), Value::Bool(false));
+    }
+
+    #[test]
+    fn functions_can_be_chosen_at_runtime() {
+        assert_eq!(
+            ev("(params.first_name == \"John\" ? to_uppercase : to_lowercase)(params.last_name)"),
+            json!("DOE").into()
+        );
+        assert_eq!(
+            ev("params.last_name | (false ? to_uppercase : to_lowercase)"),
+            json!("doe").into()
+        );
+    }
+
+    #[test]
+    fn functions_can_be_stored_and_passed_around() {
+        assert_eq!(
+            ev("{\"upper\": to_uppercase}[\"upper\"](params.first_name)"),
+            json!("JOHN").into()
+        );
+        assert_eq!(ev("[to_uppercase][0](\"x\")"), json!("X").into());
+    }
+
+    #[test]
+    fn calling_a_non_function_errors() {
+        let err = eval_str("payment.token()").unwrap_err();
+        assert!(
+            err.message.contains("only functions can be called"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn arity_is_checked() {
+        let err = eval_str("to_uppercase()").unwrap_err();
+        assert!(err.message.contains("takes 1 argument"), "{}", err.message);
     }
 
     #[test]
