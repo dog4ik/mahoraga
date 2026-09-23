@@ -392,6 +392,32 @@ mod tests {
     }
 
     #[test]
+    fn pipes_have_low_binding_power() -> crate::Result<()> {
+        assert_eq!(
+            parse_expr("5 + 6 | trim")?,
+            op(
+                Punct::Pipe,
+                op(Punct::Add, Node::Atom(5.0.into()), Node::Atom(6.0.into()),),
+                ident("trim")
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn pipes_with_parents() -> crate::Result<()> {
+        assert_eq!(
+            parse_expr("5 + (6 | trim)")?,
+            op(
+                Punct::Add,
+                Node::Atom(5.0.into()),
+                op(Punct::Pipe, Node::Atom(6.0.into()), ident("trim")),
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
     fn coalesce_parses() -> crate::Result<()> {
         assert_eq!(
             parse_expr("a ?? b")?,

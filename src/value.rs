@@ -397,6 +397,13 @@ impl Value {
         }))
     }
 
+    pub fn neq(&self, other: Value) -> Result<Value, crate::Error> {
+        match self.eq(other)? {
+            Value::Bool(b) => Ok(Value::Bool(!b)),
+            _ => unreachable!("eq can evaluate only to bool"),
+        }
+    }
+
     pub fn nullish(&self) -> bool {
         matches!(self, Value::Void | Value::Null)
     }

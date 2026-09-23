@@ -54,6 +54,8 @@ pub enum Punct {
     More,
     MoreOrEq,
     CmpEqual,
+    CmpNotEqual,
+    Bang,
     Or,
     And,
     Comma,
@@ -109,6 +111,12 @@ macro_rules! punct_tok {
     ("==") => {
         Tok::Punct(Punct::CmpEqual)
     };
+    ("!=") => {
+        Tok::Punct(Punct::CmpNotEqual)
+    };
+    ("!") => {
+        Tok::Punct(Punct::Bang)
+    };
     ("||") => {
         Tok::Punct(Punct::Or)
     };
@@ -139,9 +147,12 @@ impl Punct {
             Punct::Question => Some((4, 3)),
             Punct::Coalesce | Punct::Or => Some((5, 6)),
             Punct::And => Some((7, 8)),
-            Punct::More | Punct::MoreOrEq | Punct::Less | Punct::LessOrEq | Punct::CmpEqual => {
-                Some((9, 10))
-            }
+            Punct::More
+            | Punct::MoreOrEq
+            | Punct::Less
+            | Punct::LessOrEq
+            | Punct::CmpEqual
+            | Punct::CmpNotEqual => Some((9, 10)),
             Punct::Add | Punct::Sub => Some((11, 12)),
             Punct::Mul | Punct::Div => Some((13, 14)),
             _ => None,
@@ -158,6 +169,7 @@ impl Punct {
     pub fn prefix_binding_power(&self) -> Option<((), u8)> {
         match self {
             Punct::Add | Punct::Sub => Some(((), 15)),
+            Punct::Bang => Some(((), 15)),
             _ => None,
         }
     }
@@ -182,6 +194,8 @@ impl Display for Punct {
             Punct::Less => f.write_char('<'),
             Punct::LessOrEq => f.write_str("<="),
             Punct::CmpEqual => f.write_str("=="),
+            Punct::CmpNotEqual => f.write_str("!="),
+            Punct::Bang => f.write_char('!'),
             Punct::Or => f.write_str("||"),
             Punct::And => f.write_str("&&"),
             Punct::OpenBracket => f.write_char('['),
@@ -199,6 +213,8 @@ pub enum Atom {
     StrLit(String),
     NumLit(f64),
     BoolLit(bool),
+    NullLit,
+    VoidLit,
 }
 
 impl From<f64> for Atom {
@@ -232,6 +248,8 @@ impl Display for Atom {
             Atom::StrLit(s) => write!(f, "{s}"),
             Atom::NumLit(n) => write!(f, "{n}"),
             Atom::BoolLit(b) => write!(f, "{b}"),
+            Self::NullLit => write!(f, "null"),
+            Self::VoidLit => write!(f, "void"),
         }
     }
 }
@@ -253,7 +271,7 @@ impl FromStr for Ident {
     }
 }
 
-const IMPLICIT_SEPARATORS: &[u8] = b"()+-/*|&[]{},:?<>=\"'";
+const IMPLICIT_SEPARATORS: &[u8] = b"()+-/*|&[]{},:?<>=\"'!";
 
 #[derive(Debug)]
 pub struct Lexer {
@@ -327,6 +345,18 @@ fn tokenize(input: &str) -> crate::Result<Vec<Token>> {
             b',' => {
                 i += 1;
                 Tok::Punct(Punct::Comma)
+            }
+            b'!' => {
+                i += 1;
+                if bytes.get(i).is_some_and(|&b| b == b'=') {
+                    i += 1;
+                    Tok::Punct(Punct::CmpNotEqual)
+                } else {
+                    return Err(Error::new_with_span(
+                        "expected != operation, negation is not implemented yet",
+                        current_span(i),
+                    ));
+                }
             }
             b'|' => {
                 i += 1;
@@ -458,12 +488,12 @@ fn tokenize(input: &str) -> crate::Result<Vec<Token>> {
                     crate::Error::new_with_span("failed to slice string", current_span(i))
                 })?;
 
-                if slice == "true" {
-                    Tok::Atom(Atom::BoolLit(true))
-                } else if slice == "false" {
-                    Tok::Atom(Atom::BoolLit(false))
-                } else {
-                    Tok::Atom(Atom::Ident(Ident(slice.to_string())))
+                match slice {
+                    "true" => Tok::Atom(Atom::BoolLit(true)),
+                    "false" => Tok::Atom(Atom::BoolLit(false)),
+                    "void" => Tok::Atom(Atom::VoidLit),
+                    "null" => Tok::Atom(Atom::NullLit),
+                    _ => Tok::Atom(Atom::Ident(Ident(slice.to_string()))),
                 }
             }
             b'"' | b'\'' => {
@@ -933,6 +963,54 @@ mod tests {
     #[test]
     fn cmp_invalid_equal() -> crate::Result<()> {
         assert_matches!(tokenize("1 = 10"), Err(_));
+        Ok(())
+    }
+
+    #[test]
+    fn void_literal() -> crate::Result<()> {
+        assert_eq!(
+            tokenize("void")?,
+            vec![Token {
+                tok: Tok::Atom(Atom::VoidLit),
+                span: Span { start: 0, end: 4 }
+            }]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn null_literal() -> crate::Result<()> {
+        assert_eq!(
+            tokenize("null")?,
+            vec![Token {
+                tok: Tok::Atom(Atom::NullLit),
+                span: Span { start: 0, end: 4 }
+            }]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn null_str() -> crate::Result<()> {
+        assert_eq!(
+            tokenize("'null'")?,
+            vec![Token {
+                tok: Tok::Atom(Atom::StrLit("null".into())),
+                span: Span { start: 0, end: 6 }
+            }]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn void_str() -> crate::Result<()> {
+        assert_eq!(
+            tokenize("\"void\"")?,
+            vec![Token {
+                tok: Tok::Atom(Atom::StrLit("void".into())),
+                span: Span { start: 0, end: 6 }
+            }]
+        );
         Ok(())
     }
 

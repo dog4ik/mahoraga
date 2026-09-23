@@ -53,6 +53,7 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
             crate::lex::Punct::More => eval(*lhs, env)?.mt(eval(*rhs, env)?),
             crate::lex::Punct::MoreOrEq => eval(*lhs, env)?.mte(eval(*rhs, env)?),
             crate::lex::Punct::CmpEqual => eval(*lhs, env)?.eq(eval(*rhs, env)?),
+            crate::lex::Punct::CmpNotEqual => eval(*lhs, env)?.neq(eval(*rhs, env)?),
             crate::lex::Punct::Or => {
                 let lhs = eval(*lhs, env)?;
                 if lhs.truthy() {
@@ -108,6 +109,8 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
             crate::lex::Atom::StrLit(s) => Ok(Value::String(s)),
             crate::lex::Atom::NumLit(n) => Ok(Value::Number(n)),
             crate::lex::Atom::BoolLit(b) => Ok(Value::Bool(b)),
+            crate::lex::Atom::NullLit => Ok(Value::Null),
+            crate::lex::Atom::VoidLit => Ok(Value::Void),
         },
         Node::ArrayLit(arr) => Ok(Value::Array(Array(
             arr.into_iter()
@@ -201,7 +204,7 @@ fn call_value(callee: Value, args: Args, name: Option<&str>) -> crate::Result<Va
         // rather than reporting a bare type mismatch.
         Value::Void => Err(Error::new(match name {
             Some(name) => format!("function '{name}' is not found"),
-            None => String::from("only functions can be called, got void"),
+            None => "only functions can be called, got void".into(),
         })),
         _ => Err(Error::new(format!(
             "only functions can be called, got {}",
@@ -508,5 +511,13 @@ mod tests {
     #[test]
     fn top_level_resolution() {
         assert_eq!(ev("(nope || payment).token"), Value::String("tok_1".into()));
+    }
+
+    #[test]
+    fn neq() {
+        assert_eq!(ev("5 != 2"), Value::Bool(true));
+        assert_eq!(ev("5 != 5"), Value::Bool(false));
+        assert_eq!(ev("'test' != 5"), Value::Bool(true));
+        assert_eq!(ev("[1, 2, 3] != [1, 2, 5]"), Value::Bool(true));
     }
 }
