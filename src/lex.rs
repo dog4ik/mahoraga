@@ -168,8 +168,7 @@ impl Punct {
 
     pub fn prefix_binding_power(&self) -> Option<((), u8)> {
         match self {
-            Punct::Add | Punct::Sub => Some(((), 15)),
-            Punct::Bang => Some(((), 15)),
+            Punct::Add | Punct::Sub | Punct::Bang => Some(((), 15)),
             _ => None,
         }
     }
@@ -352,10 +351,7 @@ fn tokenize(input: &str) -> crate::Result<Vec<Token>> {
                     i += 1;
                     Tok::Punct(Punct::CmpNotEqual)
                 } else {
-                    return Err(Error::new_with_span(
-                        "expected != operation, negation is not implemented yet",
-                        current_span(i),
-                    ));
+                    Tok::Punct(Punct::Bang)
                 }
             }
             b'|' => {

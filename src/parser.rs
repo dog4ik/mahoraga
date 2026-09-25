@@ -26,6 +26,7 @@ pub enum Node {
         callee: Box<Node>,
         args: Vec<Node>,
     },
+    Negation(Box<Node>),
     ArrayLit(Vec<Node>),
     ObjectLit(HashMap<String, Node>),
     Atom(Atom),
@@ -128,12 +129,18 @@ impl Parser {
                 ..
             }) => self.parse_object()?,
             Some(Token {
-                tok: Tok::Punct(p @ (Punct::Add | Punct::Sub)),
+                tok: Tok::Punct(p @ (Punct::Add | Punct::Sub | Punct::Bang)),
                 ..
             }) => {
-                let ((), r_bp) = p.prefix_binding_power().expect("add/sub has prefix bp");
+                let ((), r_bp) = p
+                    .prefix_binding_power()
+                    .expect("add/sub/negation has prefix bp");
                 let rhs = self.parse_expr(r_bp)?;
-                Node::Op((p, (Box::new(Node::Atom(0.0.into())), Box::new(rhs))))
+                if p == Punct::Bang {
+                    Node::Negation(Box::new(rhs))
+                } else {
+                    Node::Op((p, (Box::new(Node::Atom(0.0.into())), Box::new(rhs))))
+                }
             }
             rest => {
                 return Err(Error::new_from_parts(
@@ -652,5 +659,30 @@ mod tests {
         ] {
             assert!(parse_expr(src).is_err(), "{src} should not parse");
         }
+    }
+
+    #[test]
+    fn negation_of_object_field() -> crate::Result<()> {
+        assert_eq!(
+            parse_expr("!test.value")?,
+            Node::Negation(Box::new(Node::Member {
+                object: Box::new(ident("test")),
+                field: Ident("value".into()),
+            }))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn negation_of_array() -> crate::Result<()> {
+        assert_eq!(
+            parse_expr("![1, 2, 3]")?,
+            Node::Negation(Box::new(Node::ArrayLit(vec![
+                Node::Atom(1.0.into()),
+                Node::Atom(2.0.into()),
+                Node::Atom(3.0.into()),
+            ])))
+        );
+        Ok(())
     }
 }

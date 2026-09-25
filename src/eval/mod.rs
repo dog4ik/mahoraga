@@ -183,6 +183,10 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
             );
             call_value(callee, args, name.as_deref())
         }
+        Node::Negation(statement) => {
+            let value = eval(*statement, env)?;
+            Ok(Value::Bool(!value.truthy()))
+        }
     }
 }
 
@@ -519,5 +523,13 @@ mod tests {
         assert_eq!(ev("5 != 5"), Value::Bool(false));
         assert_eq!(ev("'test' != 5"), Value::Bool(true));
         assert_eq!(ev("[1, 2, 3] != [1, 2, 5]"), Value::Bool(true));
+    }
+
+    #[test]
+    fn negation() {
+        assert_eq!(ev("!true"), Value::Bool(false));
+        assert_eq!(ev("!!true"), Value::Bool(true));
+        assert_eq!(ev("!!5"), Value::Bool(true));
+        assert_eq!(ev("!(!(false))"), Value::Bool(false));
     }
 }
