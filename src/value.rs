@@ -26,16 +26,138 @@ impl Object {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Number {
     Float(f64),
     Int(i64),
 }
 
+impl Number {
+    pub fn as_f64(&self) -> f64 {
+        match self {
+            Number::Float(f) => *f,
+            Number::Int(i) => *i as f64,
+        }
+    }
+}
+
+impl PartialEq for Number {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Float(l0), Self::Float(r0)) => l0 == r0,
+            (Self::Int(l0), Self::Int(r0)) => l0 == r0,
+            _ => self.as_f64() == other.as_f64(),
+        }
+    }
+}
+
+impl PartialOrd for Number {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.as_f64().partial_cmp(&other.as_f64())
+    }
+}
+
+macro_rules! impl_op {
+    ($trait: ident, $method: ident, $sign: tt) => {
+        impl std::ops::$trait for Number {
+            type Output = Self;
+
+            fn $method(self, rhs: Self) -> Self::Output {
+                match (self, rhs) {
+                    (Number::Float(lhs), Number::Float(rhs)) => Number::Float(lhs $sign rhs),
+                    (Number::Float(lhs), Number::Int(rhs)) => Number::Float(lhs $sign rhs as f64),
+                    (Number::Int(lhs), Number::Float(rhs)) => Number::Float(lhs as f64 $sign rhs),
+                    (Number::Int(lhs), Number::Int(rhs)) => Number::Int(lhs $sign rhs),
+                }
+            }
+        }
+    };
+}
+
+impl_op!(Sub, sub, -);
+impl_op!(Add, add, +);
+impl_op!(Div, div, /);
+impl_op!(Mul, mul, *);
+
+// impl Add for Number {
+//     type Output = Self;
+//
+//     fn add(self, rhs: Self) -> Self::Output {
+//         match (self, rhs) {
+//             (Number::Float(lhs), Number::Float(rhs)) => Number::Float(lhs + rhs),
+//             (Number::Float(lhs), Number::Int(rhs)) => Number::Float(lhs + rhs as f64),
+//             (Number::Int(lhs), Number::Float(rhs)) => Number::Float(lhs as f64 + rhs),
+//             (Number::Int(lhs), Number::Int(rhs)) => Number::Int(lhs + rhs),
+//         }
+//     }
+// }
+
+impl From<f64> for Number {
+    fn from(value: f64) -> Self {
+        Self::Float(value)
+    }
+}
+
+impl From<f32> for Number {
+    fn from(value: f32) -> Self {
+        Self::Float(value.into())
+    }
+}
+
+macro_rules! impl_from_int {
+    ($($num: ident),+) => {
+        $(
+        impl From<$num> for Number {
+            fn from(val: $num) -> Self {
+                Self::Int(val as i64)
+            }
+        }
+        )*
+    };
+}
+
+macro_rules! impl_try_from_int {
+    ($($num: ident),+) => {
+        $(
+        impl TryFrom<$num> for Number {
+            type Error = $crate::Error;
+
+            fn try_from(val: $num) -> std::result::Result<Self, $crate::Error> {
+                match i64::try_from(val) {
+                    Ok(v) => Ok(Number::Int(v)),
+                    Err(e) => Err($crate::Error::new(format!("failed to convert to int: {}", e)))
+                }
+            }
+        }
+        )*
+    };
+}
+
+macro_rules! impl_into_int {
+    ($($num: ident),+) => {
+        $(
+        impl From<Number> for $num {
+            fn from(val: Number) -> Self {
+                match val {
+                    Number::Float(f) => f as $num,
+                    Number::Int(i) => i as $num
+                }
+            }
+        }
+        )*
+    };
+}
+
+impl_from_int!(u8, u16, u32, i8, i16, i32, i64, isize);
+impl_try_from_int!(u64, u128, i128, usize);
+impl_into_int!(
+    f32, f64, u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize
+);
+
 impl Display for Number {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Number::Float(n) => write!(f, "{n}"),
+            Number::Float(n) => write!(f, "{}.{}", n.trunc(), n.fract()),
             Number::Int(i) => write!(f, "{i}"),
         }
     }
@@ -45,7 +167,7 @@ impl Display for Number {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum Value {
     String(String),
-    Number(f64),
+    Number(Number),
     Bool(bool),
     Object(Object),
     Array(Array),
@@ -59,7 +181,8 @@ pub enum Value {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum ValueType {
     String,
-    Number,
+    Integer,
+    Float,
     Bool,
     Object,
     Array,
@@ -73,7 +196,8 @@ impl ValueType {
     fn as_str(&self) -> &'static str {
         match self {
             Self::String => "str",
-            Self::Number => "number",
+            Self::Integer => "integer",
+            Self::Float => "float",
             Self::Bool => "bool",
             Self::Object => "object",
             Self::Array => "array",
@@ -102,17 +226,19 @@ impl<'a> From<&'a str> for Value {
     }
 }
 
-impl From<f64> for Value {
-    fn from(value: f64) -> Self {
-        Self::Number(value)
-    }
+macro_rules! impl_from_num_for_value {
+    ($($num: ident),+) => {
+        $(
+        impl From<$num> for Value {
+            fn from(val: $num) -> Self {
+                Self::Number(val.into())
+            }
+        }
+        )*
+    };
 }
 
-impl From<usize> for Value {
-    fn from(value: usize) -> Self {
-        Self::Number(value as f64)
-    }
-}
+impl_from_num_for_value!(f32, f64, u8, u16, u32, i8, i16, i32, i64, isize);
 
 impl From<bool> for Value {
     fn from(value: bool) -> Self {
@@ -164,7 +290,7 @@ impl TryFrom<Value> for usize {
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
-            Value::Number(n) => Ok(n as usize),
+            Value::Number(n) => Ok(n.into()),
             _ => Err(crate::Error::new("expected number value")),
         }
     }
@@ -175,8 +301,9 @@ impl TryFrom<Value> for f64 {
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
-            Value::Number(n) => Ok(n),
-            _ => Err(expected("number", &value)),
+            Value::Number(Number::Float(f)) => Ok(f),
+            Value::Number(Number::Int(i)) => Ok(i as f64),
+            _ => Err(expected(ValueType::Float, &value)),
         }
     }
 }
@@ -185,7 +312,10 @@ impl TryFrom<Value> for i64 {
     type Error = crate::Error;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
-        whole(value).map(|n| n as i64)
+        match value {
+            Value::Number(Number::Int(t)) => Ok(t),
+            _ => Err(expected(ValueType::Integer, &value)),
+        }
     }
 }
 
@@ -193,9 +323,9 @@ impl TryFrom<Value> for u32 {
     type Error = crate::Error;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
-        match whole(value)? {
-            n if (0.0..=f64::from(u32::MAX)).contains(&n) => Ok(n as u32),
-            n => Err(crate::Error::new(format!("{n} is out of range"))),
+        match value {
+            Value::Number(number) => Ok(number.into()),
+            _ => Err(crate::Error::new("expected number")),
         }
     }
 }
@@ -206,7 +336,7 @@ impl TryFrom<Value> for bool {
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
             Value::Bool(b) => Ok(b),
-            _ => Err(expected("bool", &value)),
+            _ => Err(expected(ValueType::Bool, &value)),
         }
     }
 }
@@ -217,7 +347,7 @@ impl TryFrom<Value> for Object {
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
             Value::Object(o) => Ok(o),
-            _ => Err(expected("object", &value)),
+            _ => Err(expected(ValueType::Object, &value)),
         }
     }
 }
@@ -228,20 +358,26 @@ impl TryFrom<Value> for Array {
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
             Value::Array(a) => Ok(a),
-            _ => Err(expected("array", &value)),
+            _ => Err(expected(ValueType::Array, &value)),
         }
     }
 }
 
-fn whole(value: Value) -> Result<f64, crate::Error> {
-    match value {
-        Value::Number(n) if n.fract() == 0.0 => Ok(n),
-        Value::Number(n) => Err(crate::Error::new(format!("{n} is not a whole number"))),
-        _ => Err(expected("number", &value)),
+impl TryFrom<Value> for Number {
+    type Error = crate::Error;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Number(n) => Ok(n),
+            _ => Err(crate::Error::new(format!(
+                "expected integer or float value, got {}",
+                value.value_type()
+            ))),
+        }
     }
 }
 
-fn expected(ty: &str, got: &Value) -> crate::Error {
+fn expected(ty: ValueType, got: &Value) -> crate::Error {
     crate::Error::new(format!("expected {ty} value, got {}", got.value_type()))
 }
 
@@ -339,7 +475,8 @@ impl Value {
     pub fn truthy(&self) -> bool {
         match self {
             Value::String(s) => !s.is_empty(),
-            Value::Number(n) => *n != 0.,
+            Value::Number(Number::Int(n)) => *n != 0,
+            Value::Number(Number::Float(n)) => *n != 0.,
             Value::Bool(b) => *b,
             Value::Null | Value::Void => false,
             Self::Object(Object(obj)) => !obj.is_empty(),
@@ -419,7 +556,8 @@ impl Value {
     pub fn value_type(&self) -> ValueType {
         match self {
             Value::String(_) => ValueType::String,
-            Value::Number(_) => ValueType::Number,
+            Value::Number(Number::Int(_)) => ValueType::Integer,
+            Value::Number(Number::Float(_)) => ValueType::Integer,
             Value::Bool(_) => ValueType::Bool,
             Value::Object(_) => ValueType::Object,
             Value::Array(_) => ValueType::Array,
@@ -450,11 +588,11 @@ mod from_serde_json {
         fn from(value: serde_json::Value) -> Self {
             match value {
                 serde_json::Value::Bool(b) => Self::Bool(b),
-                serde_json::Value::Number(number) => Self::Number(
-                    number
-                        .as_f64()
-                        .expect("each number should be convertible to f64"),
-                ),
+                serde_json::Value::Number(number) => Self::Number(match number.as_i64() {
+                    Some(i) => Number::Int(i),
+                    // TODO: handle float conversion failure
+                    None => Number::Float(number.as_f64().unwrap_or_default()),
+                }),
                 serde_json::Value::String(s) => Self::String(s),
                 serde_json::Value::Array(values) => {
                     Self::Array(Array(values.into_iter().map(|v| Self::from(v)).collect()))
@@ -477,7 +615,12 @@ mod from_serde_json {
         pub fn into_json(self) -> Option<serde_json::Value> {
             Some(match self {
                 Value::String(s) => serde_json::Value::String(s),
-                Value::Number(n) => serde_json::Value::Number(serde_json::Number::from_f64(n)?),
+                Value::Number(Number::Float(n)) => {
+                    serde_json::Value::Number(serde_json::Number::from_f64(n)?)
+                }
+                Value::Number(Number::Int(n)) => {
+                    serde_json::Value::Number(serde_json::Number::from_i128(n as i128)?)
+                }
                 Value::Bool(b) => serde_json::Value::Bool(b),
                 Value::Null => serde_json::Value::Null,
                 Value::Array(Array(items)) => serde_json::Value::Array(

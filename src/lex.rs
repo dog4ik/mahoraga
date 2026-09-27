@@ -210,7 +210,8 @@ impl Display for Punct {
 pub enum Atom {
     Ident(Ident),
     StrLit(String),
-    NumLit(f64),
+    FloatLit(f64),
+    IntLit(i64),
     BoolLit(bool),
     NullLit,
     VoidLit,
@@ -218,7 +219,13 @@ pub enum Atom {
 
 impl From<f64> for Atom {
     fn from(value: f64) -> Self {
-        Self::NumLit(value)
+        Self::FloatLit(value)
+    }
+}
+
+impl From<i64> for Atom {
+    fn from(value: i64) -> Self {
+        Self::IntLit(value)
     }
 }
 
@@ -245,7 +252,8 @@ impl Display for Atom {
         match self {
             Atom::Ident(ident) => write!(f, "{ident}"),
             Atom::StrLit(s) => write!(f, "{s}"),
-            Atom::NumLit(n) => write!(f, "{n}"),
+            Atom::FloatLit(n) => write!(f, "{n}"),
+            Atom::IntLit(n) => write!(f, "{n}"),
             Atom::BoolLit(b) => write!(f, "{b}"),
             Self::NullLit => write!(f, "null"),
             Self::VoidLit => write!(f, "void"),
@@ -459,16 +467,29 @@ fn tokenize(input: &str) -> crate::Result<Vec<Token>> {
                         }
                     }
                 }
-                let slice = input.get(start..i).ok_or_else(|| {
-                    crate::Error::new_with_span("failed to slice string", current_span(i))
-                })?;
-                let num = f64::from_str(&slice.replace("_", "")).map_err(|e| {
-                    crate::Error::new_with_span(
-                        format!("failed to parse number: {e}"),
-                        current_span(i),
-                    )
-                })?;
-                Tok::Atom(Atom::NumLit(num))
+                let slice = input
+                    .get(start..i)
+                    .ok_or_else(|| {
+                        crate::Error::new_with_span("failed to slice string", current_span(i))
+                    })?
+                    .replace('_', "");
+                if after_dot {
+                    let num = f64::from_str(&slice).map_err(|e| {
+                        crate::Error::new_with_span(
+                            format!("failed to parse float: {e}"),
+                            current_span(i),
+                        )
+                    })?;
+                    Tok::Atom(Atom::FloatLit(num))
+                } else {
+                    let num = i64::from_str(&slice).map_err(|e| {
+                        crate::Error::new_with_span(
+                            format!("failed to parse integer: {e}"),
+                            current_span(i),
+                        )
+                    })?;
+                    Tok::Atom(Atom::IntLit(num))
+                }
             }
             b'a'..=b'z' | b'A'..=b'Z' => {
                 i += 1;
@@ -603,12 +624,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_number() -> crate::Result<()> {
+    fn parse_int() -> crate::Result<()> {
         assert_eq!(
             tokenize("10")?,
             vec![Token {
-                tok: Tok::Atom(Atom::NumLit(10.)),
+                tok: Tok::Atom(Atom::IntLit(10)),
                 span: Span { start: 0, end: 2 }
+            }]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn parse_float_short() -> crate::Result<()> {
+        assert_eq!(
+            tokenize("10.")?,
+            vec![Token {
+                tok: Tok::Atom(Atom::FloatLit(10.)),
+                span: Span { start: 0, end: 3 }
+            }]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn parse_float() -> crate::Result<()> {
+        assert_eq!(
+            tokenize("10.123")?,
+            vec![Token {
+                tok: Tok::Atom(Atom::FloatLit(10.123)),
+                span: Span { start: 0, end: 6 }
             }]
         );
         Ok(())
@@ -619,7 +664,7 @@ mod tests {
         assert_eq!(
             tokenize("10.0393")?,
             vec![Token {
-                tok: Tok::Atom(Atom::NumLit(10.0393)),
+                tok: Tok::Atom(Atom::FloatLit(10.0393)),
                 span: Span { start: 0, end: 7 }
             }]
         );
@@ -631,7 +676,7 @@ mod tests {
         assert_eq!(
             tokenize("10.039300")?,
             vec![Token {
-                tok: Tok::Atom(Atom::NumLit(10.0393)),
+                tok: Tok::Atom(Atom::FloatLit(10.0393)),
                 span: Span { start: 0, end: 9 }
             }]
         );
@@ -654,7 +699,7 @@ mod tests {
             vec![
                 Tok::Atom(Atom::Ident(Ident("foo".into()))),
                 punct_tok!("("),
-                Tok::Atom(Atom::NumLit(1.)),
+                Tok::Atom(Atom::IntLit(1)),
                 punct_tok!(")"),
             ]
         );
@@ -702,7 +747,7 @@ mod tests {
                     span: Span { start: 8, end: 13 },
                 },
                 Token {
-                    tok: Tok::Atom(Atom::NumLit(11.)),
+                    tok: Tok::Atom(Atom::IntLit(11)),
                     span: Span { start: 14, end: 16 },
                 }
             ]
@@ -834,7 +879,7 @@ mod tests {
                     span: Span { start: 0, end: 1 }
                 },
                 Token {
-                    tok: Tok::Atom(3.0.into()),
+                    tok: Tok::Atom(3.into()),
                     span: Span { start: 1, end: 2 }
                 },
                 Token {
@@ -852,7 +897,7 @@ mod tests {
             tokenize(r#"19 ? 1 : 2"#)?,
             vec![
                 Token {
-                    tok: Tok::Atom(19.0.into()),
+                    tok: Tok::Atom(19.into()),
                     span: Span { start: 0, end: 2 }
                 },
                 Token {
@@ -860,7 +905,7 @@ mod tests {
                     span: Span { start: 3, end: 4 }
                 },
                 Token {
-                    tok: Tok::Atom(1.0.into()),
+                    tok: Tok::Atom(1.into()),
                     span: Span { start: 5, end: 6 }
                 },
                 Token {
@@ -868,7 +913,7 @@ mod tests {
                     span: Span { start: 7, end: 8 }
                 },
                 Token {
-                    tok: Tok::Atom(2.0.into()),
+                    tok: Tok::Atom(2.into()),
                     span: Span { start: 9, end: 10 }
                 }
             ]
@@ -918,7 +963,7 @@ mod tests {
             tokenize("1 <= 10")?,
             vec![
                 Token {
-                    tok: Tok::Atom(1.0.into()),
+                    tok: Tok::Atom(1.into()),
                     span: Span { start: 0, end: 1 }
                 },
                 Token {
@@ -926,7 +971,7 @@ mod tests {
                     span: Span { start: 2, end: 4 }
                 },
                 Token {
-                    tok: Tok::Atom(10.0.into()),
+                    tok: Tok::Atom(10.into()),
                     span: Span { start: 5, end: 7 }
                 },
             ]
@@ -940,7 +985,7 @@ mod tests {
             tokenize("1 == 10")?,
             vec![
                 Token {
-                    tok: Tok::Atom(1.0.into()),
+                    tok: Tok::Atom(1.into()),
                     span: Span { start: 0, end: 1 }
                 },
                 Token {
@@ -948,7 +993,7 @@ mod tests {
                     span: Span { start: 2, end: 4 }
                 },
                 Token {
-                    tok: Tok::Atom(10.0.into()),
+                    tok: Tok::Atom(10.into()),
                     span: Span { start: 5, end: 7 }
                 },
             ]
@@ -1016,7 +1061,7 @@ mod tests {
         assert_matches!(
             lexer.advance(),
             Some(Token {
-                tok: Tok::Atom(Atom::NumLit(3.)),
+                tok: Tok::Atom(Atom::IntLit(3)),
                 span: _
             })
         );
@@ -1040,7 +1085,7 @@ mod tests {
         assert_matches!(
             lexer.advance(),
             Some(Token {
-                tok: Tok::Atom(Atom::NumLit(5.3)),
+                tok: Tok::Atom(Atom::FloatLit(5.3)),
                 span: _
             })
         );
@@ -1056,7 +1101,7 @@ mod tests {
         assert_matches!(
             lexer.advance(),
             Some(Token {
-                tok: Tok::Atom(Atom::NumLit(9.)),
+                tok: Tok::Atom(Atom::FloatLit(9.)),
                 span: _
             })
         );

@@ -139,7 +139,7 @@ impl Parser {
                 if p == Punct::Bang {
                     Node::Negation(Box::new(rhs))
                 } else {
-                    Node::Op((p, (Box::new(Node::Atom(0.0.into())), Box::new(rhs))))
+                    Node::Op((p, (Box::new(Node::Atom(0.into())), Box::new(rhs))))
                 }
             }
             rest => {
@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn basic_expr() -> crate::Result<()> {
-        assert_eq!(parse_expr("12")?, Node::Atom(12.0.into()));
+        assert_eq!(parse_expr("12")?, Node::Atom(12.into()));
         Ok(())
     }
 
@@ -266,7 +266,7 @@ mod tests {
     fn basic_sum() -> crate::Result<()> {
         assert_eq!(
             parse_expr("12.4 + 13")?,
-            op(Punct::Add, Node::Atom(12.4.into()), Node::Atom(13.0.into()))
+            op(Punct::Add, Node::Atom(12.4.into()), Node::Atom(13.into()))
         );
         Ok(())
     }
@@ -278,7 +278,7 @@ mod tests {
             op(
                 Punct::Add,
                 Node::Atom(12.4.into()),
-                op(Punct::Mul, Node::Atom(13.0.into()), Node::Atom(2.0.into()))
+                op(Punct::Mul, Node::Atom(13.into()), Node::Atom(2.into()))
             )
         );
         Ok(())
@@ -290,8 +290,8 @@ mod tests {
             parse_expr("12.4 * 13 + 2")?,
             op(
                 Punct::Add,
-                op(Punct::Mul, Node::Atom(12.4.into()), Node::Atom(13.0.into())),
-                Node::Atom(2.0.into())
+                op(Punct::Mul, Node::Atom(12.4.into()), Node::Atom(13.into())),
+                Node::Atom(2.into())
             )
         );
         Ok(())
@@ -304,7 +304,7 @@ mod tests {
             op(
                 Punct::Mul,
                 Node::Atom(12.4.into()),
-                op(Punct::Add, Node::Atom(13.0.into()), Node::Atom(2.0.into()))
+                op(Punct::Add, Node::Atom(13.into()), Node::Atom(2.into()))
             )
         );
         Ok(())
@@ -315,12 +315,8 @@ mod tests {
         assert_eq!(
             parse_expr("1 ? 10 + 2 : \"true\"")?,
             Node::Turnary {
-                operand: Box::new(Node::Atom(1.0.into())),
-                truth_node: Box::new(op(
-                    Punct::Add,
-                    Node::Atom(10.0.into()),
-                    Node::Atom(2.0.into())
-                )),
+                operand: Box::new(Node::Atom(1.into())),
+                truth_node: Box::new(op(Punct::Add, Node::Atom(10.into()), Node::Atom(2.into()))),
                 false_node: Box::new(Node::Atom("true".into())),
             }
         );
@@ -348,8 +344,8 @@ mod tests {
             parse_expr("1 + 1 == 2")?,
             op(
                 Punct::CmpEqual,
-                op(Punct::Add, Node::Atom(1.0.into()), Node::Atom(1.0.into())),
-                Node::Atom(2.0.into())
+                op(Punct::Add, Node::Atom(1.into()), Node::Atom(1.into())),
+                Node::Atom(2.into())
             )
         );
         Ok(())
@@ -374,12 +370,8 @@ mod tests {
             parse_expr("1 < 2 && 3 == 3")?,
             op(
                 Punct::And,
-                op(Punct::Less, Node::Atom(1.0.into()), Node::Atom(2.0.into())),
-                op(
-                    Punct::CmpEqual,
-                    Node::Atom(3.0.into()),
-                    Node::Atom(3.0.into())
-                )
+                op(Punct::Less, Node::Atom(1.into()), Node::Atom(2.into())),
+                op(Punct::CmpEqual, Node::Atom(3.into()), Node::Atom(3.into()))
             )
         );
         Ok(())
@@ -404,7 +396,7 @@ mod tests {
             parse_expr("5 + 6 | trim")?,
             op(
                 Punct::Pipe,
-                op(Punct::Add, Node::Atom(5.0.into()), Node::Atom(6.0.into()),),
+                op(Punct::Add, Node::Atom(5.into()), Node::Atom(6.into()),),
                 ident("trim")
             )
         );
@@ -417,8 +409,8 @@ mod tests {
             parse_expr("5 + (6 | trim)")?,
             op(
                 Punct::Add,
-                Node::Atom(5.0.into()),
-                op(Punct::Pipe, Node::Atom(6.0.into()), ident("trim")),
+                Node::Atom(5.into()),
+                op(Punct::Pipe, Node::Atom(6.into()), ident("trim")),
             )
         );
         Ok(())
@@ -468,20 +460,20 @@ mod tests {
         assert_eq!(
             parse_expr("[1, a.b, c ? 2 : 3, (1 + 2) * 3]")?,
             Node::ArrayLit(vec![
-                Node::Atom(1.0.into()),
+                Node::Atom(1.into()),
                 Node::Member {
                     object: Box::new(ident("a")),
                     field: Ident("b".into())
                 },
                 Node::Turnary {
                     operand: Box::new(ident("c")),
-                    truth_node: Box::new(Node::Atom(2.0.into())),
-                    false_node: Box::new(Node::Atom(3.0.into())),
+                    truth_node: Box::new(Node::Atom(2.into())),
+                    false_node: Box::new(Node::Atom(3.into())),
                 },
                 op(
                     Punct::Mul,
-                    op(Punct::Add, Node::Atom(1.0.into()), Node::Atom(2.0.into())),
-                    Node::Atom(3.0.into())
+                    op(Punct::Add, Node::Atom(1.into()), Node::Atom(2.into())),
+                    Node::Atom(3.into())
                 ),
             ])
         );
@@ -499,7 +491,7 @@ mod tests {
             parse_expr("[][0]")?,
             Node::Index {
                 object: Box::new(Node::ArrayLit(vec![])),
-                index: Box::new(Node::Atom(0.0.into())),
+                index: Box::new(Node::Atom(0.into())),
             }
         );
         Ok(())
@@ -525,7 +517,7 @@ mod tests {
             )?,
             Node::ObjectLit(HashMap::from_iter([
                 ("foo".into(), Node::Atom(Atom::StrLit("bar".into()))),
-                ("baz".into(), Node::Atom(Atom::NumLit(43.)))
+                ("baz".into(), Node::Atom(Atom::IntLit(43)))
             ]))
         );
         Ok(())
@@ -573,16 +565,16 @@ mod tests {
                     },
                     Node::Turnary {
                         operand: Box::new(ident("c")),
-                        truth_node: Box::new(Node::Atom(1.0.into())),
-                        false_node: Box::new(Node::Atom(2.0.into())),
+                        truth_node: Box::new(Node::Atom(1.into())),
+                        false_node: Box::new(Node::Atom(2.into())),
                     },
                     op(
                         Punct::Mul,
-                        op(Punct::Add, Node::Atom(1.0.into()), Node::Atom(2.0.into())),
-                        Node::Atom(3.0.into())
+                        op(Punct::Add, Node::Atom(1.into()), Node::Atom(2.into())),
+                        Node::Atom(3.into())
                     ),
-                    Node::ArrayLit(vec![Node::Atom(4.0.into())]),
-                    call(ident("bar"), vec![Node::Atom(5.0.into())]),
+                    Node::ArrayLit(vec![Node::Atom(4.into())]),
+                    call(ident("bar"), vec![Node::Atom(5.into())]),
                 ]
             )
         );
@@ -600,11 +592,11 @@ mod tests {
                             object: Box::new(ident("a")),
                             field: Ident("b".into())
                         },
-                        vec![Node::Atom(1.0.into())]
+                        vec![Node::Atom(1.into())]
                     )),
-                    index: Box::new(Node::Atom(0.0.into()))
+                    index: Box::new(Node::Atom(0.into()))
                 },
-                vec![Node::Atom(2.0.into())]
+                vec![Node::Atom(2.into())]
             )
         );
         Ok(())
@@ -616,11 +608,11 @@ mod tests {
             parse_expr("1 + foo(2) * 3")?,
             op(
                 Punct::Add,
-                Node::Atom(1.0.into()),
+                Node::Atom(1.into()),
                 op(
                     Punct::Mul,
-                    call(ident("foo"), vec![Node::Atom(2.0.into())]),
-                    Node::Atom(3.0.into())
+                    call(ident("foo"), vec![Node::Atom(2.into())]),
+                    Node::Atom(3.into())
                 )
             )
         );
@@ -628,8 +620,8 @@ mod tests {
             parse_expr("-foo(2)")?,
             op(
                 Punct::Sub,
-                Node::Atom(0.0.into()),
-                call(ident("foo"), vec![Node::Atom(2.0.into())])
+                Node::Atom(0.into()),
+                call(ident("foo"), vec![Node::Atom(2.into())])
             )
         );
         Ok(())
@@ -678,9 +670,9 @@ mod tests {
         assert_eq!(
             parse_expr("![1, 2, 3]")?,
             Node::Negation(Box::new(Node::ArrayLit(vec![
-                Node::Atom(1.0.into()),
-                Node::Atom(2.0.into()),
-                Node::Atom(3.0.into()),
+                Node::Atom(1.into()),
+                Node::Atom(2.into()),
+                Node::Atom(3.into()),
             ])))
         );
         Ok(())

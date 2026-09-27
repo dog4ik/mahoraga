@@ -6,7 +6,7 @@ fn main() {
     let mut env = mahoraga::Env::default();
     assert_eq!(
         mahoraga::eval_str("1 + 2 * 5", &env).unwrap(),
-        mahoraga::Value::Number(11.)
+        mahoraga::Value::Number(11.0.into())
     );
 
     env.fns.extend([mahoraga::declare_fn!(

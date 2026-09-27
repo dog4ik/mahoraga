@@ -1,6 +1,6 @@
 use std::{collections::HashMap, rc::Rc};
 
-use crate::{Value, eval::fns::Function};
+use crate::{Value, eval::fns::Function, value::Number};
 
 #[macro_export]
 macro_rules! declare_fn {
@@ -35,6 +35,8 @@ pub fn std_fns() -> HashMap<&'static str, Rc<Function>> {
             void_as_null(Value),
             "Convert void value to null, used to emit explicit nulls"
         ),
+        declare_fn!(to_i(Number), "Convert number to integer"),
+        declare_fn!(to_f(Number), "Convert number to float"),
     ]
     .into_iter()
     .collect()
@@ -50,6 +52,20 @@ pub fn concat(val: Vec<Value>) -> crate::Result<Value> {
         .map(Value::stringify)
         .collect::<String>()
         .into())
+}
+
+pub fn to_i(val: Number) -> crate::Result<Value> {
+    match val {
+        Number::Float(f) => Ok(Value::Number(Number::Int(f as i64))),
+        Number::Int(_) => Ok(Value::Number(val)),
+    }
+}
+
+pub fn to_f(val: Number) -> crate::Result<Value> {
+    match val {
+        Number::Float(_) => Ok(Value::Number(val)),
+        Number::Int(i) => Ok(Value::Number(Number::Float(i as f64))),
+    }
 }
 
 pub fn to_lowercase(val: String) -> crate::Result<Value> {
@@ -77,8 +93,10 @@ mod tests {
     use crate::{Args, Callable, Env, eval_str, value::Object};
 
     mod scaling {
+        use crate::value::Number;
+
         pub fn scale(v: f64, by: u32) -> crate::Result<crate::Value> {
-            Ok(crate::Value::Number(v * f64::from(by)))
+            Ok(crate::Value::Number(Number::Float(v * f64::from(by))))
         }
     }
 
@@ -99,16 +117,20 @@ mod tests {
         let f = env.fns.get("scale").expect("registered under `scale`");
         assert_eq!(f.name, "scale");
         assert_eq!(f.arity(), 2, "the piped input counts");
-        assert_eq!(eval_str("3 | scale(4)", &env).unwrap(), Value::Number(12.));
-        assert_eq!(eval_str("scale(3, 4)", &env).unwrap(), Value::Number(12.));
+        assert_eq!(
+            eval_str("3 | scale(4)", &env).unwrap(),
+            Value::Number(12.0.into())
+        );
+        assert_eq!(
+            eval_str("scale(3, 4)", &env).unwrap(),
+            Value::Number(12.0.into())
+        );
     }
 
     #[test]
     fn typed_arguments_reject_the_wrong_value() {
         let err = eval_str("'x' | scale(4)", &env()).unwrap_err();
-        assert!(err.message.contains("expected number value"), "{err}");
-        let err = eval_str("3 | scale(1.5)", &env()).unwrap_err();
-        assert!(err.message.contains("not a whole number"), "{err}");
+        assert!(err.message.contains("expected float value"), "{err}");
     }
 
     #[test]

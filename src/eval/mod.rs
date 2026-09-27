@@ -5,7 +5,7 @@ use crate::{
     eval::fns::{Args, Function},
     lex::{Atom, Ident},
     parser::Node,
-    value::{Array, Object, Value},
+    value::{Array, Number, Object, Value},
 };
 
 pub mod fns;
@@ -24,8 +24,11 @@ impl Env {
             runtime_objects: Object(HashMap::from_iter([(
                 String::from("constants"),
                 Value::Object(Object(HashMap::from_iter([
-                    (String::from("pi"), Value::Number(consts::PI)),
-                    (String::from("tau"), Value::Number(consts::TAU)),
+                    (String::from("pi"), Value::Number(Number::Float(consts::PI))),
+                    (
+                        String::from("tau"),
+                        Value::Number(Number::Float(consts::TAU)),
+                    ),
                 ]))),
             )])),
         }
@@ -107,7 +110,8 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
                 },
             },
             crate::lex::Atom::StrLit(s) => Ok(Value::String(s)),
-            crate::lex::Atom::NumLit(n) => Ok(Value::Number(n)),
+            crate::lex::Atom::FloatLit(n) => Ok(Value::Number(Number::Float(n))),
+            crate::lex::Atom::IntLit(n) => Ok(Value::Number(Number::Int(n))),
             crate::lex::Atom::BoolLit(b) => Ok(Value::Bool(b)),
             crate::lex::Atom::NullLit => Ok(Value::Null),
             crate::lex::Atom::VoidLit => Ok(Value::Void),
@@ -148,11 +152,16 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
                 Value::Array(Array(array)) => {
                     let index = eval(*index, env)?;
                     match index {
-                        Value::Number(n) if n >= 0. && n.fract() == 0. => {
+                        Value::Number(Number::Float(n)) if n >= 0. && n.fract() == 0. => {
+                            Ok(array.get(n as usize).cloned().unwrap_or(Value::Void))
+                        }
+                        Value::Number(Number::Int(n)) if n >= 0 => {
                             Ok(array.get(n as usize).cloned().unwrap_or(Value::Void))
                         }
                         Value::Null | Value::Void => Ok(Value::Void),
-                        _ => Err(Error::new("array can be only indexed by unsigned integer")),
+                        _ => Err(Error::new(
+                            "array can be only indexed by unsigned integer like number",
+                        )),
                     }
                 }
                 _ => Err(crate::Error::new(format!(
@@ -243,25 +252,25 @@ mod tests {
 
     #[test]
     fn basic_add() -> crate::Result<()> {
-        assert_eq!(eval(parse_expr("2 + 2")?)?, Value::Number(4.0));
+        assert_eq!(eval(parse_expr("2 + 2")?)?, Value::Number(4.0.into()));
         Ok(())
     }
 
     #[test]
     fn add_and_mult() -> crate::Result<()> {
-        assert_eq!(eval(parse_expr("(2 + 2) * 3")?)?, Value::Number(12.));
+        assert_eq!(eval(parse_expr("(2 + 2) * 3")?)?, Value::Number(12.into()));
         Ok(())
     }
 
     #[test]
     fn turnary_true() -> crate::Result<()> {
-        assert_eq!(eval(parse_expr("true ? 1 : 2")?)?, Value::Number(1.));
+        assert_eq!(eval(parse_expr("true ? 1 : 2")?)?, Value::Number(1.into()));
         Ok(())
     }
 
     #[test]
     fn turnary_false() -> crate::Result<()> {
-        assert_eq!(eval(parse_expr("false ? 1 : 2")?)?, Value::Number(2.));
+        assert_eq!(eval(parse_expr("false ? 1 : 2")?)?, Value::Number(2.into()));
         Ok(())
     }
 
@@ -271,7 +280,7 @@ mod tests {
             eval(parse_expr(
                 "false ? 1 ? 10 + 10 : 0 : \"test\" ? 100 * 125 : 0"
             )?)?,
-            Value::Number(100. * 125.)
+            Value::Number((100 * 125).into())
         );
         Ok(())
     }
@@ -434,7 +443,7 @@ mod tests {
             Value::Array(Array(vec![
                 Value::String("John".into()),
                 Value::Void,
-                Value::Number(2.)
+                Value::Number(2.into())
             ]))
         );
         assert_eq!(ev("[1, 2][5]"), Value::Void);
@@ -530,6 +539,19 @@ mod tests {
         assert_eq!(ev("!true"), Value::Bool(false));
         assert_eq!(ev("!!true"), Value::Bool(true));
         assert_eq!(ev("!!5"), Value::Bool(true));
+        assert_eq!(ev("!!5.0"), Value::Bool(true));
         assert_eq!(ev("!(!(false))"), Value::Bool(false));
+    }
+
+    #[test]
+    fn integer_casting() {
+        assert_eq!(ev("5 + 5.9"), Value::Number(10.9.into()));
+        assert_eq!(ev("5 + 1"), Value::Number(6.into()));
+        assert_eq!(ev("0.0 + 1"), Value::Number(1.0.into()));
+        assert_eq!(ev("0.0 * 1"), Value::Number(0.0.into()));
+        assert_eq!(ev("0.0 - 1"), Value::Number((-1.0).into()));
+        assert_eq!(ev("0 - 1"), Value::Number((-1).into()));
+        assert_eq!(ev("5.9 + 0.1"), Value::Number(6.0.into()));
+        assert_eq!(ev("5859 / 100."), Value::Number(58.59.into()));
     }
 }
