@@ -557,7 +557,7 @@ impl Value {
         match self {
             Value::String(_) => ValueType::String,
             Value::Number(Number::Int(_)) => ValueType::Integer,
-            Value::Number(Number::Float(_)) => ValueType::Integer,
+            Value::Number(Number::Float(_)) => ValueType::Float,
             Value::Bool(_) => ValueType::Bool,
             Value::Object(_) => ValueType::Object,
             Value::Array(_) => ValueType::Array,
