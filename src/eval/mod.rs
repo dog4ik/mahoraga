@@ -544,6 +544,19 @@ mod tests {
     }
 
     #[test]
+    fn integer_errors_do_not_panic() {
+        let err = |src| eval(parse_expr(src).unwrap()).unwrap_err();
+        assert!(err("1 / 0").message.contains("division by zero"));
+        assert!(err("9223372036854775807 + 1").message.contains("overflow"));
+        assert!(
+            err("0 - 9223372036854775807 - 2")
+                .message
+                .contains("overflow")
+        );
+        assert!(err("9223372036854775807 * 2").message.contains("overflow"));
+    }
+
+    #[test]
     fn integer_casting() {
         assert_eq!(ev("5 + 5.9"), Value::Number(10.9.into()));
         assert_eq!(ev("5 + 1"), Value::Number(6.into()));

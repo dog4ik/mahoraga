@@ -58,39 +58,31 @@ impl PartialOrd for Number {
 }
 
 macro_rules! impl_op {
-    ($trait: ident, $method: ident, $sign: tt) => {
-        impl std::ops::$trait for Number {
-            type Output = Self;
-
-            fn $method(self, rhs: Self) -> Self::Output {
-                match (self, rhs) {
-                    (Number::Float(lhs), Number::Float(rhs)) => Number::Float(lhs $sign rhs),
-                    (Number::Float(lhs), Number::Int(rhs)) => Number::Float(lhs $sign rhs as f64),
-                    (Number::Int(lhs), Number::Float(rhs)) => Number::Float(lhs as f64 $sign rhs),
-                    (Number::Int(lhs), Number::Int(rhs)) => Number::Int(lhs $sign rhs),
+    ($method: ident, $checked: ident, $sign: tt) => {
+        /// Integer overflow and division by zero are errors, not panics.
+        pub fn $method(self, rhs: Self) -> crate::Result<Self> {
+            Ok(match (self, rhs) {
+                (Number::Int(lhs), Number::Int(rhs)) => {
+                    Number::Int(lhs.$checked(rhs).ok_or_else(|| {
+                        crate::Error::new(format!(
+                            "integer overflow or division by zero: {lhs} {} {rhs}",
+                            stringify!($sign)
+                        ))
+                    })?)
                 }
-            }
+                (lhs, rhs) => Number::Float(lhs.as_f64() $sign rhs.as_f64()),
+            })
         }
     };
 }
 
-impl_op!(Sub, sub, -);
-impl_op!(Add, add, +);
-impl_op!(Div, div, /);
-impl_op!(Mul, mul, *);
-
-// impl Add for Number {
-//     type Output = Self;
-//
-//     fn add(self, rhs: Self) -> Self::Output {
-//         match (self, rhs) {
-//             (Number::Float(lhs), Number::Float(rhs)) => Number::Float(lhs + rhs),
-//             (Number::Float(lhs), Number::Int(rhs)) => Number::Float(lhs + rhs as f64),
-//             (Number::Int(lhs), Number::Float(rhs)) => Number::Float(lhs as f64 + rhs),
-//             (Number::Int(lhs), Number::Int(rhs)) => Number::Int(lhs + rhs),
-//         }
-//     }
-// }
+#[allow(clippy::should_implement_trait)]
+impl Number {
+    impl_op!(add, checked_add, +);
+    impl_op!(sub, checked_sub, -);
+    impl_op!(mul, checked_mul, *);
+    impl_op!(div, checked_div, /);
+}
 
 impl From<f64> for Number {
     fn from(value: f64) -> Self {
@@ -157,7 +149,9 @@ impl_into_int!(
 impl Display for Number {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Number::Float(n) => write!(f, "{}.{}", n.trunc(), n.fract()),
+            Number::Float(n) => {
+                write!(f, "{n:?}")
+            }
             Number::Int(i) => write!(f, "{i}"),
         }
     }
@@ -446,28 +440,28 @@ impl Value {
     pub fn add(self, other: Self) -> crate::Result<Self> {
         Ok(match (self, other) {
             (Value::String(lhs), Value::String(rhs)) => Value::String(lhs + &rhs),
-            (Value::Number(lhs), Value::Number(rhs)) => Value::Number(lhs + rhs),
+            (Value::Number(lhs), Value::Number(rhs)) => Value::Number(lhs.add(rhs)?),
             _ => return Err(crate::Error::new("unsupported add operands")),
         })
     }
 
     pub fn sub(self, other: Self) -> crate::Result<Self> {
         Ok(match (self, other) {
-            (Value::Number(lhs), Value::Number(rhs)) => Value::Number(lhs - rhs),
+            (Value::Number(lhs), Value::Number(rhs)) => Value::Number(lhs.sub(rhs)?),
             _ => return Err(crate::Error::new("unsupported sub operands")),
         })
     }
 
     pub fn mul(self, other: Self) -> crate::Result<Self> {
         Ok(match (self, other) {
-            (Value::Number(lhs), Value::Number(rhs)) => Value::Number(lhs * rhs),
+            (Value::Number(lhs), Value::Number(rhs)) => Value::Number(lhs.mul(rhs)?),
             _ => return Err(crate::Error::new("unsupported mul operands")),
         })
     }
 
     pub fn div(self, other: Self) -> crate::Result<Self> {
         Ok(match (self, other) {
-            (Value::Number(lhs), Value::Number(rhs)) => Value::Number(lhs / rhs),
+            (Value::Number(lhs), Value::Number(rhs)) => Value::Number(lhs.div(rhs)?),
             _ => return Err(crate::Error::new("unsupported div operands")),
         })
     }
