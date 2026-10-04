@@ -4,7 +4,7 @@ use crate::{
     Error,
     eval::fns::{Args, Function},
     lex::{Atom, Ident},
-    parser::Node,
+    parser::{Node, NodeKind},
     value::{Array, Number, Object, Value},
 };
 
@@ -44,9 +44,9 @@ impl Env {
     }
 }
 
-pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
-    match node {
-        Node::Op((punct, (lhs, rhs))) => match punct {
+pub fn eval(Node { span, kind }: Node, env: &Env) -> crate::Result<Value> {
+    match kind {
+        NodeKind::Op((punct, (lhs, rhs))) => match punct {
             crate::lex::Punct::Add => eval(*lhs, env)?.add(eval(*rhs, env)?),
             crate::lex::Punct::Mul => eval(*lhs, env)?.mul(eval(*rhs, env)?),
             crate::lex::Punct::Sub => eval(*lhs, env)?.sub(eval(*rhs, env)?),
@@ -76,18 +76,18 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
             crate::lex::Punct::Pipe => {
                 let lhs = eval(*lhs, env)?;
                 // `x | f` and `x | f(a, b)` both mean "call f with x first".
-                let (callee, rest) = match *rhs {
-                    Node::Call { callee, args } => (*callee, args),
-                    node => (node, Vec::new()),
+                let (callee, rest) = match &rhs.kind {
+                    NodeKind::Call { callee, args } => (callee, args),
+                    _ => (&rhs, &Vec::new()),
                 };
-                let name = callee_name(&callee).map(String::from);
-                let callee = eval(callee, env)?;
+                let name = callee_name(&callee.kind).map(String::from);
+                let callee = eval(*callee.clone(), env)?;
                 let mut values = Vec::with_capacity(rest.len() + 1);
                 values.push(lhs);
                 for arg in rest {
-                    values.push(eval(arg, env)?);
+                    values.push(eval(arg.clone(), env)?);
                 }
-                call_value(callee, Args(values), name.as_deref())
+                call_value(callee, Args(values), name.as_deref()).map_err(|e| e.with_span(rhs.span))
             }
             crate::lex::Punct::Coalesce => {
                 let lhs = eval(*lhs, env)?;
@@ -97,9 +97,9 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
                     Ok(lhs)
                 }
             }
-            _ => Err(Error::new(format!("can't eval {punct}"))),
+            _ => Err(Error::new_with_span(format!("can't eval {punct}"), span)),
         },
-        Node::Atom(atom) => match atom {
+        NodeKind::Atom(atom) => match atom {
             // Attached scope shadows the function registry, so a payload field never gets
             // swallowed by a function of the same name.
             crate::lex::Atom::Ident(Ident(i)) => match env.runtime_objects.0.get(&i) {
@@ -116,17 +116,17 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
             crate::lex::Atom::NullLit => Ok(Value::Null),
             crate::lex::Atom::VoidLit => Ok(Value::Void),
         },
-        Node::ArrayLit(arr) => Ok(Value::Array(Array(
+        NodeKind::ArrayLit(arr) => Ok(Value::Array(Array(
             arr.into_iter()
                 .map(|v| eval(v, env))
                 .collect::<Result<Vec<_>, _>>()?,
         ))),
-        Node::ObjectLit(map) => Ok(Value::Object(Object(
+        NodeKind::ObjectLit(map) => Ok(Value::Object(Object(
             map.into_iter()
                 .map(|(k, v)| Ok((k, eval(v, env)?)))
                 .collect::<crate::Result<_>>()?,
         ))),
-        Node::Turnary {
+        NodeKind::Turnary {
             operand,
             truth_node,
             false_node,
@@ -138,7 +138,7 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
                 eval(*false_node, env)
             }
         }
-        Node::Index { object, index } => {
+        NodeKind::Index { object, index } => {
             let object = eval(*object, env)?;
             match object {
                 Value::Object(Object(object)) => {
@@ -146,7 +146,10 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
                     match index {
                         Value::String(s) => Ok(object.get(&s).cloned().unwrap_or(Value::Void)),
                         Value::Null | Value::Void => Ok(Value::Void),
-                        _ => Err(Error::new("object can be only indexed by string")),
+                        _ => Err(Error::new_with_span(
+                            "object can be only indexed by string",
+                            span,
+                        )),
                     }
                 }
                 Value::Array(Array(array)) => {
@@ -159,17 +162,19 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
                             Ok(array.get(n as usize).cloned().unwrap_or(Value::Void))
                         }
                         Value::Null | Value::Void => Ok(Value::Void),
-                        _ => Err(Error::new(
+                        _ => Err(Error::new_with_span(
                             "array can be only indexed by unsigned integer like number",
+                            span,
                         )),
                     }
                 }
-                _ => Err(crate::Error::new(format!(
-                    "only array or object can be indexed, got {object:?}"
-                ))),
+                _ => Err(crate::Error::new_with_span(
+                    format!("only array or object can be indexed, got {object:?}",),
+                    span,
+                )),
             }
         }
-        Node::Member {
+        NodeKind::Member {
             object,
             field: Ident(field),
         } => {
@@ -177,22 +182,23 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
             match object {
                 Value::Object(Object(obj)) => Ok(obj.get(&field).cloned().unwrap_or(Value::Void)),
                 Value::Null | Value::Void => Ok(Value::Void),
-                _ => Err(Error::new(format!(
-                    "only object can have member access, got {object:?}"
-                ))),
+                _ => Err(Error::new_with_span(
+                    format!("only object can have member access, got {object:?}"),
+                    span,
+                )),
             }
         }
-        Node::Call { callee, args } => {
-            let name = callee_name(&callee).map(String::from);
+        NodeKind::Call { callee, args } => {
+            let name = callee_name(&callee.kind).map(String::from);
             let callee = eval(*callee, env)?;
             let args = Args(
                 args.into_iter()
                     .map(|v| eval(v, env))
                     .collect::<crate::Result<Vec<_>>>()?,
             );
-            call_value(callee, args, name.as_deref())
+            call_value(callee, args, name.as_deref()).map_err(|e| e.with_span(span))
         }
-        Node::Negation(statement) => {
+        NodeKind::Negation(statement) => {
             let value = eval(*statement, env)?;
             Ok(Value::Bool(!value.truthy()))
         }
@@ -200,10 +206,10 @@ pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
 }
 
 /// The name a callee was written as, kept only so a failed call can say which one it was.
-fn callee_name(node: &Node) -> Option<&str> {
+fn callee_name(node: &NodeKind) -> Option<&str> {
     match node {
-        Node::Atom(Atom::Ident(Ident(name))) => Some(name),
-        Node::Member {
+        NodeKind::Atom(Atom::Ident(Ident(name))) => Some(name),
+        NodeKind::Member {
             field: Ident(f), ..
         } => Some(f),
         _ => None,
@@ -387,7 +393,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "function calls are not supported yet"]
     fn reproduces_the_scripay_account_name_rule() {
         assert_eq!(
             ev("[params.first_name, params.last_name] | join(' ') | trim"),
@@ -413,11 +418,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "function calls are not supported yet"]
     fn function_errors_carry_the_call_span() {
         let err = eval_str("params.customer | trim").unwrap_err();
         assert!(err.message.starts_with("trim:"), "{}", err.message);
-        assert_eq!(err.span, Some(Span::new(18, 22)));
+        assert_eq!(err.span, Some(Span::new(18..22)));
     }
 
     #[test]

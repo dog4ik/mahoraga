@@ -564,7 +564,7 @@ impl Value {
     /// Get a useful representation of the value in a string
     ///
     /// Values that can't be useful in string conversion are ignored
-    pub fn stringify(self) -> String {
+    pub fn stringify(&self) -> String {
         match self {
             Value::String(v) => v.clone(),
             Value::Number(n) => n.to_string(),

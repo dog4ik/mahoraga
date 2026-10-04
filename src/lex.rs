@@ -251,8 +251,8 @@ impl Display for Atom {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Atom::Ident(ident) => write!(f, "{ident}"),
-            Atom::StrLit(s) => write!(f, "{s}"),
-            Atom::FloatLit(n) => write!(f, "{n}"),
+            Atom::StrLit(s) => write!(f, "\"{s}\""),
+            Atom::FloatLit(n) => write!(f, "{n:?}"),
             Atom::IntLit(n) => write!(f, "{n}"),
             Atom::BoolLit(b) => write!(f, "{b}"),
             Self::NullLit => write!(f, "null"),
@@ -612,6 +612,10 @@ impl Lexer {
 
     pub fn peek(&self) -> Option<Token> {
         self.tokens.get(self.pos).cloned()
+    }
+
+    pub fn pos(&self) -> usize {
+        self.pos
     }
 }
 

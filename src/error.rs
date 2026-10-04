@@ -38,6 +38,11 @@ impl Error {
             span: Some(span),
         }
     }
+
+    pub fn with_span(mut self, span: Span) -> Self {
+        self.span = Some(span);
+        self
+    }
 }
 
 impl From<std::convert::Infallible> for Error {

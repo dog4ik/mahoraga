@@ -1,5 +1,6 @@
 mod error;
 mod eval;
+pub mod facts;
 mod lex;
 mod parser;
 mod span;
@@ -12,7 +13,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub use eval::Env;
 pub use eval::eval;
 pub use eval::fns::{Args, Callable, Function};
-pub use parser::Node;
+pub use parser::NodeKind;
 pub use parser::parse_expr;
 pub use value::Value;
 

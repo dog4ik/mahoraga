@@ -32,6 +32,22 @@ pub fn std_fns() -> HashMap<&'static str, Rc<Function>> {
             "Concatenate an array of values into a string"
         ),
         declare_fn!(
+            join(Vec<Value>, String),
+            "Concatenate an array of values into a string using a separator"
+        ),
+        declare_fn!(
+            trim(String),
+            "Returns a string with leading and trailing whitespace removed"
+        ),
+        declare_fn!(
+            trim_end(String),
+            "Returns a string slice with trailing whitespace removed"
+        ),
+        declare_fn!(
+            trim_start(String),
+            "Returns a string slice with leading whitespace removed"
+        ),
+        declare_fn!(
             void_as_null(Value),
             "Convert void value to null, used to emit explicit nulls"
         ),
@@ -47,11 +63,35 @@ pub fn to_uppercase(val: String) -> crate::Result<Value> {
 }
 
 pub fn concat(val: Vec<Value>) -> crate::Result<Value> {
-    Ok(val
-        .into_iter()
-        .map(Value::stringify)
-        .collect::<String>()
-        .into())
+    Ok(val.iter().map(Value::stringify).collect::<String>().into())
+}
+
+pub fn join(val: Vec<Value>, separator: String) -> crate::Result<Value> {
+    let mut out = String::new();
+    let len = val.len();
+    if len == 0 {
+        return Ok(Value::String(String::new()));
+    }
+    for val in val.iter().map(Value::stringify).take(len - 1) {
+        out += &val;
+        out += &separator;
+    }
+
+    out += &val[len - 1].stringify();
+
+    Ok(Value::String(out))
+}
+
+pub fn trim(val: String) -> crate::Result<Value> {
+    Ok(Value::String(val.trim().to_owned()))
+}
+
+pub fn trim_start(val: String) -> crate::Result<Value> {
+    Ok(Value::String(val.trim_start().to_owned()))
+}
+
+pub fn trim_end(val: String) -> crate::Result<Value> {
+    Ok(Value::String(val.trim_end().to_owned()))
 }
 
 pub fn to_i(val: Number) -> crate::Result<Value> {
@@ -141,6 +181,24 @@ mod tests {
             crate::value::Array::try_from(Value::Array(crate::value::Array::default())).is_ok()
         );
         assert!(bool::try_from(Value::Void).is_err());
+    }
+
+    #[test]
+    fn join_empty_array() -> crate::Result<()> {
+        assert_eq!(
+            Value::String(String::new()),
+            eval_str("[] | join(' ')", &Env::std())?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn join_mixed_array() -> crate::Result<()> {
+        assert_eq!(
+            Value::String(String::from("10.0 10 hello")),
+            eval_str("[10.0, 10, 'hello'] | join(' ')", &Env::std())?
+        );
+        Ok(())
     }
 
     /// `Args` is public, so a caller outside the crate can decorate a function.
