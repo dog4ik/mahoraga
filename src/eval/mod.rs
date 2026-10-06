@@ -44,8 +44,8 @@ impl RuntimeError {
             RuntimeError::InvalidObjectKey(_) => Some("object can be only keys by string values".to_string()),
             RuntimeError::InvalidArrayIndex(_) => Some("array can only be keyed by integers or rounded floats e.g. 3 or 3.0".to_string()),
             RuntimeError::InvalidIndexOperand => None,
-            RuntimeError::UnexpectedType { got, expected } => None,
-            RuntimeError::FunctionCallError(function_call_error) => None,
+            RuntimeError::UnexpectedType { .. } => None,
+            RuntimeError::FunctionCallError(_) => None,
             RuntimeError::IntegerOverflow => None,
         }
     }

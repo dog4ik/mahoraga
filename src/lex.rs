@@ -30,6 +30,9 @@ pub enum LexerError {
         expected: Option<&'static str>,
     },
     InvalidNumLiteral(NumLiteralError),
+    UnclosedStrLit {
+        quote_char: char,
+    },
 }
 
 impl LexerError {
@@ -46,7 +49,14 @@ impl LexerError {
     }
 
     pub fn help(&self) -> Option<String> {
-        None
+        match self {
+            LexerError::UnexpectedChar { .. } => None,
+            LexerError::UnexpectedEOF { .. } => None,
+            LexerError::InvalidNumLiteral(_) => None,
+            LexerError::UnclosedStrLit { quote_char } => Some(format!(
+                "all string literals must be closed, consider adding ({quote_char}) character where string should end"
+            )),
+        }
     }
 }
 
@@ -71,6 +81,10 @@ impl Display for LexerError {
 
             LexerError::InvalidNumLiteral(e) => {
                 write!(f, "invalid number literal, {e}")
+            }
+
+            LexerError::UnclosedStrLit { .. } => {
+                write!(f, "unclosed string literal")
             }
         }
     }
@@ -597,8 +611,8 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
                 loop {
                     let Some(&c) = bytes.get(i) else {
                         return Err(Spanned::new(
-                            LexerError::UnexpectedEOF {
-                                expected: Some("string literal close character"),
+                            LexerError::UnclosedStrLit {
+                                quote_char: str_quote as char,
                             },
                             current_span(i),
                         ));
@@ -608,13 +622,18 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
                         break;
                     }
                     if c == b'\\' {
-                        let Some(&next) = bytes.get(i + 1) else {
-                            return Err(Spanned::new(
-                                LexerError::UnexpectedEOF {
-                                    expected: Some("string literal close character"),
-                                },
-                                current_span(i),
-                            ));
+                        let next = match bytes.get(i + 1) {
+                            Some(b'n') => b'\n',
+                            Some(b'\\') => b'\\',
+                            Some(&next) => next,
+                            None => {
+                                return Err(Spanned::new(
+                                    LexerError::UnclosedStrLit {
+                                        quote_char: str_quote as char,
+                                    },
+                                    current_span(i),
+                                ));
+                            }
                         };
 
                         s.push(next);
@@ -1208,6 +1227,30 @@ mod tests {
 
         assert_matches!(lexer.advance(), None);
         assert_matches!(lexer.advance(), None);
+        Ok(())
+    }
+
+    #[test]
+    fn newline_literal() -> Result {
+        assert_eq!(
+            tokenize(r#""void\n""#)?,
+            vec![Token {
+                tok: Tok::Atom(Atom::StrLit("void\n".into())),
+                span: Span { start: 0, end: 8 }
+            }]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn newline_escaped() -> Result {
+        assert_eq!(
+            tokenize(r#""\\n test""#)?,
+            vec![Token {
+                tok: Tok::Atom(Atom::StrLit(String::from(r#"\n test"#))),
+                span: Span { start: 0, end: 10 }
+            }]
+        );
         Ok(())
     }
 }

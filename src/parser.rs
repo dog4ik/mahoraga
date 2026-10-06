@@ -31,9 +31,9 @@ impl ParserError {
         match self {
             ParserError::InvalidMemberAccess => None,
             ParserError::InvalidKey => None,
-            ParserError::UnexpectedToken { got, expected } => None,
-            ParserError::UnexpectedEof { expected } => None,
-            ParserError::ExpectedEof { got } => None,
+            ParserError::UnexpectedToken { .. } => None,
+            ParserError::UnexpectedEof { .. } => None,
+            ParserError::ExpectedEof { .. } => None,
         }
     }
 }

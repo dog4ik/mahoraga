@@ -4,6 +4,7 @@ use crate::{
     Atom::{self},
     Ident, NodeKind, Punct, Span,
     parser::Node,
+    value::Number,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +32,13 @@ impl From<FactIdent> for String {
 pub struct Call {
     pub name: FactIdent,
     pub args: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PathComponent {
+    MapIndex(String),
+    Object(Box<PathComponent>),
+    ArrayIdx(Number),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
