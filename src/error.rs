@@ -1,52 +1,76 @@
-use std::fmt::Display;
+use crate::{
+    eval::RuntimeError,
+    lex::LexerError,
+    parser::ParserError,
+    span::{Span, Spanned},
+};
 
-use crate::span::Span;
-
-#[derive(Debug, Clone)]
-pub struct Error {
-    pub span: Option<Span>,
-    pub message: String,
+#[derive(Debug, thiserror::Error)]
+pub enum ErrorKind {
+    #[error("lexer error: {}", .0.inner)]
+    Lexer(Spanned<LexerError>),
+    #[error("parser error: {}", .0.inner)]
+    Parser(Spanned<ParserError>),
+    #[error("runtime error: {}", .0.inner)]
+    Runtime(Spanned<RuntimeError>),
 }
 
-impl Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.span {
-            Some(pos) => write!(f, "{} in pos: {}", self.message, pos),
-            None => write!(f, "{}", self.message),
+impl ErrorKind {
+    pub fn help(&self) -> Option<String> {
+        match self {
+            ErrorKind::Lexer(spanned) => spanned.inner.help(),
+            ErrorKind::Parser(spanned) => spanned.inner.help(),
+            ErrorKind::Runtime(spanned) => spanned.inner.help(),
         }
-    }
-}
-
-impl Error {
-    pub fn new(msg: impl Into<String>) -> Self {
-        Self {
-            message: msg.into(),
-            span: None,
-        }
-    }
-
-    pub fn new_from_parts(msg: impl Into<String>, span: Option<Span>) -> Self {
-        Self {
-            message: msg.into(),
-            span,
-        }
-    }
-
-    pub fn new_with_span(msg: impl Into<String>, span: Span) -> Self {
-        Self {
-            message: msg.into(),
-            span: Some(span),
-        }
-    }
-
-    pub fn with_span(mut self, span: Span) -> Self {
-        self.span = Some(span);
-        self
     }
 }
 
-impl From<std::convert::Infallible> for Error {
-    fn from(value: std::convert::Infallible) -> Self {
-        match value {}
+macro_rules! impl_from_spanned {
+    ($($variant:ident($err:ty)),*) => {$(
+        impl From<Spanned<$err>> for ErrorKind {
+            fn from(value: Spanned<$err>) -> Self {
+                ErrorKind::$variant(value)
+            }
+        }
+    )*};
+}
+
+impl_from_spanned!(
+    Lexer(LexerError),
+    Parser(ParserError),
+    Runtime(RuntimeError)
+);
+
+impl ErrorKind {
+    pub fn span(&self) -> Span {
+        match self {
+            ErrorKind::Lexer(spanned) => spanned.span,
+            ErrorKind::Parser(spanned) => spanned.span,
+            ErrorKind::Runtime(spanned) => spanned.span,
+        }
+    }
+}
+
+#[cfg(feature = "miette")]
+impl miette::Diagnostic for ErrorKind {
+    fn code<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        Some(Box::new(match self {
+            ErrorKind::Lexer(_) => "mahoraga::lexer",
+            ErrorKind::Parser(_) => "mahoraga::parser",
+            ErrorKind::Runtime(_) => "mahoraga::runtime",
+        }))
+    }
+
+    fn help<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        match self.help() {
+            Some(v) => Some(Box::new(v)),
+            None => None,
+        }
+    }
+
+    fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
+        Some(Box::new(std::iter::once(
+            miette::LabeledSpan::new_with_span(Some("here".into()), self.span()),
+        )))
     }
 }

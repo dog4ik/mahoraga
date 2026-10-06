@@ -52,6 +52,9 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
     let (color, title) = match &app.preview {
         None => (Color::Gray, " input ".to_string()),
         Some(Ok(value)) => (Color::LightGreen, format!(" = {value:?} ")),
+        Some(Err(err)) if let Some(help) = err.help() => {
+            (Color::LightRed, format!(" error: {err} ({help}) "))
+        }
         Some(Err(err)) => (Color::LightRed, format!(" error: {err} ")),
     };
 

@@ -4,14 +4,43 @@ use std::{
 };
 
 use crate::{
-    Error, Span, facts,
+    Span, facts,
     lex::{Atom, Ident, Lexer, Punct, Tok, Token},
     punct_tok,
+    span::Spanned,
 };
+
+pub type Result<T> = std::result::Result<T, Spanned<ParserError>>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum ParserError {
+    #[error("invalid member access")]
+    InvalidMemberAccess,
+    #[error("invalid map key")]
+    InvalidKey,
+    #[error("unexpected token '{got}', expected {expected}")]
+    UnexpectedToken { got: Tok, expected: String },
+    #[error("unexpected end of input, expected {expected}")]
+    UnexpectedEof { expected: String },
+    #[error("expected end of input, got {got}")]
+    ExpectedEof { got: String },
+}
+
+impl ParserError {
+    pub fn help(&self) -> Option<String> {
+        match self {
+            ParserError::InvalidMemberAccess => None,
+            ParserError::InvalidKey => None,
+            ParserError::UnexpectedToken { got, expected } => None,
+            ParserError::UnexpectedEof { expected } => None,
+            ParserError::ExpectedEof { got } => None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Node {
-    /// Full node span rega
+    /// Full node span
     pub span: Span,
     pub kind: NodeKind,
 }
@@ -114,7 +143,7 @@ impl Parser {
     /// Parse comma separated list.
     ///
     /// Returns parsed nodes and terminator token
-    fn parse_comma_separated(&mut self, terminator: Punct) -> crate::Result<(Vec<Node>, Token)> {
+    fn parse_comma_separated(&mut self, terminator: Punct) -> Result<(Vec<Node>, Token)> {
         let mut items = Vec::new();
         if !matches!(self.lex.peek(), Some(Token { tok: Tok::Punct(p), .. }) if p == terminator) {
             items.push(self.parse_expr(0)?);
@@ -134,7 +163,7 @@ impl Parser {
     /// Parse object literal.
     ///
     /// Returns Object node and terminator token
-    fn parse_object(&mut self) -> crate::Result<(NodeKind, Token)> {
+    fn parse_object(&mut self) -> Result<(NodeKind, Token)> {
         let mut entries = HashMap::new();
         if !matches!(
             self.lex.peek(),
@@ -149,9 +178,9 @@ impl Parser {
                     ..
                 }) => s,
                 rest => {
-                    return Err(Error::new_from_parts(
-                        format!("map key must be string literal, got {rest:?}"),
-                        rest.map(|v| v.span),
+                    return Err(Spanned::new(
+                        ParserError::InvalidKey,
+                        rest.map(|v| v.span).unwrap_or_else(|| self.lex.end_span()),
                     ));
                 }
             };
@@ -164,15 +193,25 @@ impl Parser {
             }) = self.lex.peek()
             {
                 self.lex.advance();
+
+                // ignore trailing comma
+                if let Some(Token {
+                    tok: punct_tok!("}"),
+                    ..
+                }) = self.lex.peek()
+                {
+                    break;
+                }
+
                 let key = match self.lex.advance() {
                     Some(Token {
                         tok: Tok::Atom(Atom::StrLit(s)),
                         ..
                     }) => s,
                     rest => {
-                        return Err(Error::new_from_parts(
-                            format!("map key must be string literal, got {rest:?}"),
-                            rest.map(|v| v.span),
+                        return Err(Spanned::new(
+                            ParserError::InvalidKey,
+                            rest.map(|v| v.span).unwrap_or_else(|| self.lex.end_span()),
                         ));
                     }
                 };
@@ -185,14 +224,16 @@ impl Parser {
         Ok((NodeKind::ObjectLit(entries), end))
     }
 
-    pub fn parse_expr(&mut self, min_bind_power: u8) -> crate::Result<Node> {
+    pub fn parse_expr(&mut self, min_bind_power: u8) -> Result<Node> {
         let Some(Token {
             tok,
             span: start_span,
         }) = self.lex.advance()
         else {
-            return Err(Error::new_with_span(
-                "expected atom, got EOF".to_string(),
+            return Err(Spanned::new(
+                ParserError::UnexpectedEof {
+                    expected: "atom token".into(),
+                },
                 Span {
                     start: self.lex.pos(),
                     end: self.lex.pos(),
@@ -255,8 +296,10 @@ impl Parser {
                 }
             }
             _ => {
-                return Err(Error::new_with_span(
-                    format!("bad token, expected atom, got {tok:?}"),
+                return Err(Spanned::new(
+                    ParserError::UnexpectedEof {
+                        expected: "atom token".into(),
+                    },
                     start_span,
                 ));
             }
@@ -269,8 +312,11 @@ impl Parser {
                     span,
                 }) => (p, span),
                 Some(t) => {
-                    return Err(Error::new_with_span(
-                        format!("expected punct token, got {t}"),
+                    return Err(Spanned::new(
+                        ParserError::UnexpectedToken {
+                            expected: "atom token".into(),
+                            got: t.tok,
+                        },
                         t.span,
                     ));
                 }
@@ -321,9 +367,9 @@ impl Parser {
                             }
                         }
                         rest => {
-                            return Err(Error::new_from_parts(
-                                format!("expected member accessor, got: {rest:?}"),
-                                rest.map(|v| v.span),
+                            return Err(Spanned::new(
+                                ParserError::InvalidMemberAccess,
+                                rest.map(|v| v.span).unwrap_or_else(|| self.lex.end_span()),
                             ));
                         }
                     },
@@ -376,6 +422,9 @@ pub fn parse_expr(input: &str) -> crate::Result<Node> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    type Result<T> = crate::Result<T>;
+
     #[derive(Debug, Default)]
     struct Spanner {
         pos: usize,
@@ -484,7 +533,7 @@ mod tests {
     }
 
     #[test]
-    fn basic_expr() -> crate::Result<()> {
+    fn basic_expr() -> Result<()> {
         assert_eq!(
             parse_expr("12")?,
             Node {
@@ -496,7 +545,7 @@ mod tests {
     }
 
     #[test]
-    fn basic_sum() -> crate::Result<()> {
+    fn basic_sum() -> Result<()> {
         let mut spanner = Spanner::default();
         let expr = "12.4 + 13";
         assert_eq!(
@@ -522,7 +571,7 @@ mod tests {
     }
 
     #[test]
-    fn basic_mul_presidence() -> crate::Result<()> {
+    fn basic_mul_presidence() -> Result<()> {
         let mut spanner = Spanner::default();
         let expr = "12.4 + 13 * 2";
         assert_eq!(
@@ -552,7 +601,7 @@ mod tests {
     }
 
     #[test]
-    fn basic_mul_presidence_rev() -> crate::Result<()> {
+    fn basic_mul_presidence_rev() -> Result<()> {
         assert_eq!(
             parse_expr("12.4 * 13 + 2")?,
             op(
@@ -580,7 +629,7 @@ mod tests {
     }
 
     #[test]
-    fn basic_parents() -> crate::Result<()> {
+    fn basic_parents() -> Result<()> {
         assert_eq!(
             parse_expr("12.4 * (13 + 2)")?,
             op(
@@ -594,7 +643,7 @@ mod tests {
     }
 
     #[test]
-    fn turnary_expr() -> crate::Result<()> {
+    fn turnary_expr() -> Result<()> {
         assert_eq!(
             parse_expr("1 ? 10 + 2 : \"true\"")?,
             turnary(
@@ -608,7 +657,7 @@ mod tests {
     }
 
     #[test]
-    fn path() -> crate::Result<()> {
+    fn path() -> Result<()> {
         assert_eq!(
             parse_expr("test.mail.ru")?,
             member(member(ident("test", 0..4), "mail", 0..9), "ru", 0..12)
@@ -617,7 +666,7 @@ mod tests {
     }
 
     #[test]
-    fn cmp_equal() -> crate::Result<()> {
+    fn cmp_equal() -> Result<()> {
         assert_eq!(
             parse_expr("1 + 1 == 2")?,
             op(
@@ -631,7 +680,7 @@ mod tests {
     }
 
     #[test]
-    fn and_binds_tighter_than_or() -> crate::Result<()> {
+    fn and_binds_tighter_than_or() -> Result<()> {
         assert_eq!(
             parse_expr("a || b && c")?,
             op(
@@ -645,7 +694,7 @@ mod tests {
     }
 
     #[test]
-    fn comparison_binds_tighter_than_and() -> crate::Result<()> {
+    fn comparison_binds_tighter_than_and() -> Result<()> {
         assert_eq!(
             parse_expr("1 < 2 && 3 == 3")?,
             op(
@@ -659,7 +708,7 @@ mod tests {
     }
 
     #[test]
-    fn pipes_chain_left_to_right() -> crate::Result<()> {
+    fn pipes_chain_left_to_right() -> Result<()> {
         assert_eq!(
             parse_expr("a | trim | upper")?,
             op(
@@ -673,7 +722,7 @@ mod tests {
     }
 
     #[test]
-    fn pipes_have_low_binding_power() -> crate::Result<()> {
+    fn pipes_have_low_binding_power() -> Result<()> {
         assert_eq!(
             parse_expr("5 + 6 | trim")?,
             op(
@@ -687,7 +736,7 @@ mod tests {
     }
 
     #[test]
-    fn pipes_with_parents() -> crate::Result<()> {
+    fn pipes_with_parents() -> Result<()> {
         assert_eq!(
             parse_expr("5 + (6 | trim)")?,
             op(
@@ -701,7 +750,7 @@ mod tests {
     }
 
     #[test]
-    fn coalesce_parses() -> crate::Result<()> {
+    fn coalesce_parses() -> Result<()> {
         assert_eq!(
             parse_expr("a ?? b")?,
             op(Punct::Coalesce, ident("a", 0..1), ident("b", 5..6), 0..6)
@@ -710,7 +759,7 @@ mod tests {
     }
 
     #[test]
-    fn path_index() -> crate::Result<()> {
+    fn path_index() -> Result<()> {
         assert_eq!(
             parse_expr("a[b.test]")?,
             index(
@@ -723,7 +772,7 @@ mod tests {
     }
 
     #[test]
-    fn path_member() -> crate::Result<()> {
+    fn path_member() -> Result<()> {
         assert_eq!(
             parse_expr("a.b.c")?,
             member(member(ident("a", 0..1), "b", 0..3), "c", 0..5)
@@ -732,7 +781,7 @@ mod tests {
     }
 
     #[test]
-    fn array_literal_elements_are_full_expressions() -> crate::Result<()> {
+    fn array_literal_elements_are_full_expressions() -> Result<()> {
         assert_eq!(
             parse_expr("[1, a.b, c ? 2 : 3, (1 + 2) * 3]")?,
             array(
@@ -754,7 +803,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_array_literal() -> crate::Result<()> {
+    fn empty_array_literal() -> Result<()> {
         assert_eq!(parse_expr("[]")?, array(vec![], 0..2));
         assert_eq!(
             parse_expr("[[], []]")?,
@@ -777,7 +826,7 @@ mod tests {
     }
 
     #[test]
-    fn multiline_object_lit() -> crate::Result<()> {
+    fn multiline_object_lit() -> Result<()> {
         assert_eq!(
             parse_expr(
                 r#"{
@@ -797,7 +846,7 @@ mod tests {
     }
 
     #[test]
-    fn fn_call() -> crate::Result<()> {
+    fn fn_call() -> Result<()> {
         assert_eq!(
             parse_expr(r#"foo(1.0, "baz")"#)?,
             call(
@@ -810,7 +859,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_arguments_list() -> crate::Result<()> {
+    fn empty_arguments_list() -> Result<()> {
         assert_eq!(parse_expr("foo()")?, call(ident("foo", 0..3), vec![], 0..5));
         assert_eq!(
             parse_expr("foo(bar())")?,
@@ -824,7 +873,7 @@ mod tests {
     }
 
     #[test]
-    fn arguments_are_full_expressions() -> crate::Result<()> {
+    fn arguments_are_full_expressions() -> Result<()> {
         assert_eq!(
             parse_expr("foo(a.b, c ? 1 : 2, (1 + 2) * 3, [4], bar(5))")?,
             call(
@@ -848,7 +897,7 @@ mod tests {
     }
 
     #[test]
-    fn calls_chain_with_member_and_index() -> crate::Result<()> {
+    fn calls_chain_with_member_and_index() -> Result<()> {
         assert_eq!(
             parse_expr("a.b(1)[0](2)")?,
             call(
@@ -869,7 +918,7 @@ mod tests {
     }
 
     #[test]
-    fn call_binds_tighter_than_operators() -> crate::Result<()> {
+    fn call_binds_tighter_than_operators() -> Result<()> {
         assert_eq!(
             parse_expr("1 + foo(2) * 3")?,
             op(
@@ -898,7 +947,7 @@ mod tests {
     }
 
     #[test]
-    fn call_is_piped_into() -> crate::Result<()> {
+    fn call_is_piped_into() -> Result<()> {
         assert_eq!(
             parse_expr("a | join(' ') | trim")?,
             op(
@@ -926,7 +975,7 @@ mod tests {
     }
 
     #[test]
-    fn negation_of_object_field() -> crate::Result<()> {
+    fn negation_of_object_field() -> Result<()> {
         assert_eq!(
             parse_expr("!test.value")?,
             negation(member(ident("test", 1..5), "value", 1..11), 0..11)
@@ -935,7 +984,7 @@ mod tests {
     }
 
     #[test]
-    fn negation_of_array() -> crate::Result<()> {
+    fn negation_of_array() -> Result<()> {
         assert_eq!(
             parse_expr("![1, 2, 3]")?,
             negation(

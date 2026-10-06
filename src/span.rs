@@ -1,10 +1,37 @@
-use std::{fmt::Display, ops::RangeBounds};
+use std::{error::Error, fmt::Display, ops::RangeBounds};
 
 /// Represents byte index in the input
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
+}
+
+#[cfg(feature = "miette")]
+impl From<Span> for miette::SourceSpan {
+    fn from(value: Span) -> Self {
+        Self::from(value.start..value.end)
+    }
+}
+
+#[derive(Debug)]
+pub struct Spanned<T> {
+    pub inner: T,
+    pub span: Span,
+}
+
+impl<T: Error> Error for Spanned<T> {}
+
+impl<T: Error> Display for Spanned<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.inner)
+    }
+}
+
+impl<T> Spanned<T> {
+    pub fn new(inner: T, span: Span) -> Self {
+        Self { inner, span }
+    }
 }
 
 impl<T: RangeBounds<usize>> From<T> for Span {

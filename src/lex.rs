@@ -3,7 +3,80 @@ use std::{
     str::FromStr,
 };
 
-use crate::{Error, span::Span};
+use crate::{
+    parser,
+    span::{Span, Spanned},
+};
+
+#[derive(Debug, thiserror::Error)]
+pub enum NumLiteralError {
+    #[error("only one underscore is allowed as numeric separator")]
+    MoreThanOneSeparator,
+    #[error("numeric separators are not allowed at the end of numeric literals")]
+    TrailingSeparator,
+    #[error("invalid float: {0}")]
+    FloatParse(std::num::ParseFloatError),
+    #[error("invalid int: {0}")]
+    IntParse(std::num::ParseIntError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum LexerError {
+    UnexpectedChar {
+        got: char,
+        expected: Option<&'static str>,
+    },
+    UnexpectedEOF {
+        expected: Option<&'static str>,
+    },
+    InvalidNumLiteral(NumLiteralError),
+}
+
+impl LexerError {
+    fn expected_char(expected: &'static str, got: Option<&u8>) -> Self {
+        match got {
+            Some(c) => Self::UnexpectedChar {
+                got: *c as char,
+                expected: Some(expected),
+            },
+            None => Self::UnexpectedEOF {
+                expected: Some(expected),
+            },
+        }
+    }
+
+    pub fn help(&self) -> Option<String> {
+        None
+    }
+}
+
+impl Display for LexerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LexerError::UnexpectedChar {
+                got,
+                expected: None,
+            } => write!(f, "unexpected character '{got}'"),
+            LexerError::UnexpectedChar {
+                got,
+                expected: Some(v),
+            } => write!(f, "unexpected character, got '{got}' expected {v}"),
+
+            LexerError::UnexpectedEOF { expected: Some(v) } => {
+                write!(f, "unexpected end of input expected {v}")
+            }
+            LexerError::UnexpectedEOF { expected: None } => {
+                write!(f, "unexpected end of input")
+            }
+
+            LexerError::InvalidNumLiteral(e) => {
+                write!(f, "invalid number literal, {e}")
+            }
+        }
+    }
+}
+
+type Result<T> = std::result::Result<T, Spanned<LexerError>>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tok {
@@ -271,9 +344,9 @@ impl Display for Ident {
 }
 
 impl FromStr for Ident {
-    type Err = Error;
+    type Err = std::convert::Infallible;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         Ok(Self(s.to_string()))
     }
 }
@@ -287,7 +360,7 @@ pub struct Lexer {
     pos: usize,
 }
 
-fn tokenize(input: &str) -> crate::Result<Vec<Token>> {
+fn tokenize(input: &str) -> Result<Vec<Token>> {
     let mut out = Vec::new();
     let bytes = input.as_bytes();
     let mut i = 0;
@@ -377,7 +450,10 @@ fn tokenize(input: &str) -> crate::Result<Vec<Token>> {
                     i += 1;
                     Tok::Punct(Punct::And)
                 } else {
-                    return Err(Error::new_with_span("expected second &", current_span(i)));
+                    return Err(Spanned::new(
+                        LexerError::expected_char("second &", bytes.get(i)),
+                        current_span(i),
+                    ));
                 }
             }
             b'>' => {
@@ -404,7 +480,10 @@ fn tokenize(input: &str) -> crate::Result<Vec<Token>> {
                     i += 1;
                     Tok::Punct(Punct::CmpEqual)
                 } else {
-                    return Err(Error::new_with_span("expected second =", current_span(i)));
+                    return Err(Spanned::new(
+                        LexerError::expected_char("second =", bytes.get(i)),
+                        current_span(i),
+                    ));
                 }
             }
             b'?' => {
@@ -432,21 +511,25 @@ fn tokenize(input: &str) -> crate::Result<Vec<Token>> {
                             i += 1;
                             match bytes.get(i) {
                                 Some(b'_') => {
-                                    return Err(Error::new_with_span(
-                                        "only one underscore is allowed as numeric separator",
+                                    return Err(Spanned::new(
+                                        LexerError::InvalidNumLiteral(
+                                            NumLiteralError::MoreThanOneSeparator,
+                                        ),
                                         current_span(i),
                                     ));
                                 }
                                 Some(b'0'..=b'9') => {}
                                 None => {
-                                    return Err(Error::new_with_span(
-                                        "numeric separators are not allowed at the end of numeric literals",
+                                    return Err(Spanned::new(
+                                        LexerError::InvalidNumLiteral(
+                                            NumLiteralError::TrailingSeparator,
+                                        ),
                                         current_span(i),
                                     ));
                                 }
-                                _ => {
-                                    return Err(Error::new_with_span(
-                                        "invalid or unexpected token",
+                                rest => {
+                                    return Err(Spanned::new(
+                                        LexerError::expected_char("number character", rest),
                                         current_span(i),
                                     ));
                                 }
@@ -457,11 +540,8 @@ fn tokenize(input: &str) -> crate::Result<Vec<Token>> {
                             after_dot = true;
                         }
                         _ => {
-                            return Err(crate::Error::new_with_span(
-                                format!(
-                                    "expected number character, got '{}'",
-                                    str::from_utf8(&[*next]).unwrap(),
-                                ),
+                            return Err(Spanned::new(
+                                LexerError::expected_char("number character", Some(next)),
                                 current_span(i),
                             ));
                         }
@@ -469,22 +549,20 @@ fn tokenize(input: &str) -> crate::Result<Vec<Token>> {
                 }
                 let slice = input
                     .get(start..i)
-                    .ok_or_else(|| {
-                        crate::Error::new_with_span("failed to slice string", current_span(i))
-                    })?
+                    .expect("valid string literal range")
                     .replace('_', "");
                 if after_dot {
                     let num = f64::from_str(&slice).map_err(|e| {
-                        crate::Error::new_with_span(
-                            format!("failed to parse float: {e}"),
+                        Spanned::new(
+                            LexerError::InvalidNumLiteral(NumLiteralError::FloatParse(e)),
                             current_span(i),
                         )
                     })?;
                     Tok::Atom(Atom::FloatLit(num))
                 } else {
                     let num = i64::from_str(&slice).map_err(|e| {
-                        crate::Error::new_with_span(
-                            format!("failed to parse integer: {e}"),
+                        Spanned::new(
+                            LexerError::InvalidNumLiteral(NumLiteralError::IntParse(e)),
                             current_span(i),
                         )
                     })?;
@@ -501,9 +579,8 @@ fn tokenize(input: &str) -> crate::Result<Vec<Token>> {
                     i += 1;
                 }
 
-                let slice = input.get(start..i).ok_or_else(|| {
-                    crate::Error::new_with_span("failed to slice string", current_span(i))
-                })?;
+                // Source code input is a valid utf8, so stopping on ascii splits utf8 correctly
+                let slice = input.get(start..i).expect("valid string literal range");
 
                 match slice {
                     "true" => Tok::Atom(Atom::BoolLit(true)),
@@ -519,8 +596,10 @@ fn tokenize(input: &str) -> crate::Result<Vec<Token>> {
                 let mut s = Vec::new();
                 loop {
                     let Some(&c) = bytes.get(i) else {
-                        return Err(Error::new_with_span(
-                            "unclosed string literal",
+                        return Err(Spanned::new(
+                            LexerError::UnexpectedEOF {
+                                expected: Some("string literal close character"),
+                            },
                             current_span(i),
                         ));
                     };
@@ -530,8 +609,10 @@ fn tokenize(input: &str) -> crate::Result<Vec<Token>> {
                     }
                     if c == b'\\' {
                         let Some(&next) = bytes.get(i + 1) else {
-                            return Err(Error::new_with_span(
-                                "unclosed string literal",
+                            return Err(Spanned::new(
+                                LexerError::UnexpectedEOF {
+                                    expected: Some("string literal close character"),
+                                },
                                 current_span(i),
                             ));
                         };
@@ -544,19 +625,16 @@ fn tokenize(input: &str) -> crate::Result<Vec<Token>> {
                     }
                 }
 
-                let s = String::from_utf8(s).map_err(|e| {
-                    Error::new_with_span(
-                        format!("failed to construct string literal: {e}"),
-                        current_span(i),
-                    )
-                })?;
+                let s = String::from_utf8(s).expect("source input is valid utf8");
                 Tok::Atom(Atom::StrLit(s))
             }
             _ => {
                 let end = i;
-                let c = char::from_u32(character.into()).unwrap();
-                return Err(crate::Error::new_with_span(
-                    format!("unrecognized token: {c}"),
+                return Err(Spanned::new(
+                    LexerError::UnexpectedChar {
+                        got: character as char,
+                        expected: None,
+                    },
                     Span { start, end },
                 ));
             }
@@ -572,7 +650,7 @@ fn tokenize(input: &str) -> crate::Result<Vec<Token>> {
 }
 
 impl Lexer {
-    pub fn new(input: &str) -> crate::Result<Lexer> {
+    pub fn new(input: &str) -> Result<Lexer> {
         Ok(Lexer {
             tokens: tokenize(input)?,
             pos: 0,
@@ -585,25 +663,34 @@ impl Lexer {
         Some(token.clone())
     }
 
-    pub fn expect_next(&mut self, tok: Tok) -> crate::Result<Token> {
-        let token = self
-            .tokens
-            .get(self.pos)
-            .ok_or_else(|| Error::new(format!("unexpected EOF, expected {tok}")))?;
+    pub fn expect_next(&mut self, tok: Tok) -> parser::Result<Token> {
+        let token = self.tokens.get(self.pos).ok_or_else(|| {
+            Spanned::new(
+                parser::ParserError::UnexpectedEof {
+                    expected: tok.to_string(),
+                },
+                Span::new(self.pos.saturating_sub(1)..self.pos),
+            )
+        })?;
         self.pos += 1;
         if token.tok != tok {
-            return Err(Error::new_with_span(
-                format!("unexpected token {}, expected: {tok}", token.tok),
+            return Err(Spanned::new(
+                parser::ParserError::UnexpectedToken {
+                    expected: tok.to_string(),
+                    got: token.tok.clone(),
+                },
                 token.span,
             ));
         }
         Ok(token.clone())
     }
 
-    pub fn expect_eof(&mut self) -> crate::Result<()> {
+    pub fn expect_eof(&mut self) -> crate::parser::Result<()> {
         match self.advance() {
-            Some(tok) => Err(Error::new_with_span(
-                format!("expected eof, got {tok}"),
+            Some(tok) => Err(Spanned::new(
+                crate::parser::ParserError::ExpectedEof {
+                    got: tok.to_string(),
+                },
                 tok.span,
             )),
             None => Ok(()),
@@ -617,6 +704,13 @@ impl Lexer {
     pub fn pos(&self) -> usize {
         self.pos
     }
+
+    pub fn end_span(&self) -> Span {
+        self.tokens
+            .last()
+            .map(|t| t.span)
+            .unwrap_or(Span::new(0..0))
+    }
 }
 
 #[cfg(test)]
@@ -627,8 +721,10 @@ mod tests {
 
     use super::*;
 
+    type Result = std::result::Result<(), Spanned<LexerError>>;
+
     #[test]
-    fn parse_int() -> crate::Result<()> {
+    fn parse_int() -> Result {
         assert_eq!(
             tokenize("10")?,
             vec![Token {
@@ -640,7 +736,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_float_short() -> crate::Result<()> {
+    fn parse_float_short() -> Result {
         assert_eq!(
             tokenize("10.")?,
             vec![Token {
@@ -652,7 +748,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_float() -> crate::Result<()> {
+    fn parse_float() -> Result {
         assert_eq!(
             tokenize("10.123")?,
             vec![Token {
@@ -664,7 +760,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_number_float() -> crate::Result<()> {
+    fn parse_number_float() -> Result {
         assert_eq!(
             tokenize("10.0393")?,
             vec![Token {
@@ -676,7 +772,7 @@ mod tests {
     }
 
     #[test]
-    fn number_with_trailing_zeros() -> crate::Result<()> {
+    fn number_with_trailing_zeros() -> Result {
         assert_eq!(
             tokenize("10.039300")?,
             vec![Token {
@@ -688,13 +784,13 @@ mod tests {
     }
 
     #[test]
-    fn invalid_number() -> crate::Result<()> {
+    fn invalid_number() -> Result {
         assert_matches!(tokenize("10.039300."), Err(_));
         Ok(())
     }
 
     #[test]
-    fn atoms_end_on_implicit_separators() -> crate::Result<()> {
+    fn atoms_end_on_implicit_separators() -> Result {
         assert_eq!(
             tokenize("foo(1)")?
                 .into_iter()
@@ -714,7 +810,7 @@ mod tests {
     }
 
     #[test]
-    fn punctstream() -> crate::Result<()> {
+    fn punctstream() -> Result {
         assert_eq!(
             tokenize("+-/*()??value 11")?,
             vec![
@@ -760,7 +856,7 @@ mod tests {
     }
 
     #[test]
-    fn coalesce() -> crate::Result<()> {
+    fn coalesce() -> Result {
         assert_eq!(
             tokenize("??")?,
             vec![Token {
@@ -772,7 +868,7 @@ mod tests {
     }
 
     #[test]
-    fn string_lit() -> crate::Result<()> {
+    fn string_lit() -> Result {
         assert_eq!(
             tokenize(r#""Hello world!""#)?,
             vec![Token {
@@ -784,7 +880,7 @@ mod tests {
     }
 
     #[test]
-    fn string_lit_escaped() -> crate::Result<()> {
+    fn string_lit_escaped() -> Result {
         assert_eq!(
             tokenize(r#""\"Hello world!\"""#)?,
             vec![Token {
@@ -796,7 +892,7 @@ mod tests {
     }
 
     #[test]
-    fn string_lit_double_escape() -> crate::Result<()> {
+    fn string_lit_double_escape() -> Result {
         assert_eq!(
             tokenize(r#""\\\"Hello world!\\\"""#)?,
             vec![Token {
@@ -808,19 +904,19 @@ mod tests {
     }
 
     #[test]
-    fn invalid_escape() -> crate::Result<()> {
+    fn invalid_escape() -> Result {
         assert_matches!(tokenize(r#"\\\alter"#), Err(_));
         Ok(())
     }
 
     #[test]
-    fn invalid_literal() -> crate::Result<()> {
+    fn invalid_literal() -> Result {
         assert_matches!(tokenize(r#"""#), Err(_));
         Ok(())
     }
 
     #[test]
-    fn single_quote_literal() -> crate::Result<()> {
+    fn single_quote_literal() -> Result {
         assert_eq!(
             tokenize(r#"'hello'"#)?,
             vec![Token {
@@ -832,13 +928,13 @@ mod tests {
     }
 
     #[test]
-    fn mixed_quote_literal_fails() -> crate::Result<()> {
+    fn mixed_quote_literal_fails() -> Result {
         assert_matches!(tokenize(r#"'hello""#), Err(_));
         Ok(())
     }
 
     #[test]
-    fn single_quote_is_allowed_in_double_quotes() -> crate::Result<()> {
+    fn single_quote_is_allowed_in_double_quotes() -> Result {
         assert_eq!(
             tokenize(r#""he'' ''ll'o""#)?,
             vec![Token {
@@ -850,7 +946,7 @@ mod tests {
     }
 
     #[test]
-    fn double_quote_is_allowed_in_single_quotes() -> crate::Result<()> {
+    fn double_quote_is_allowed_in_single_quotes() -> Result {
         assert_eq!(
             tokenize(r#"'"test" " test"'"#)?,
             vec![Token {
@@ -862,19 +958,19 @@ mod tests {
     }
 
     #[test]
-    fn trailing_escape_fails_gracefully() -> crate::Result<()> {
+    fn trailing_escape_fails_gracefully() -> Result {
         assert_matches!(tokenize(r#""abc\"#), Err(_));
         Ok(())
     }
 
     #[test]
-    fn unclosed_invalid_literal() -> crate::Result<()> {
+    fn unclosed_invalid_literal() -> Result {
         assert_matches!(tokenize(r#""value"#), Err(_));
         Ok(())
     }
 
     #[test]
-    fn num_in_parens() -> crate::Result<()> {
+    fn num_in_parens() -> Result {
         assert_eq!(
             tokenize(r#"(3)"#)?,
             vec![
@@ -896,7 +992,7 @@ mod tests {
     }
 
     #[test]
-    fn ternary() -> crate::Result<()> {
+    fn ternary() -> Result {
         assert_eq!(
             tokenize(r#"19 ? 1 : 2"#)?,
             vec![
@@ -926,13 +1022,13 @@ mod tests {
     }
 
     #[test]
-    fn partial_ternary() -> crate::Result<()> {
+    fn partial_ternary() -> Result {
         assert_matches!(tokenize(r#"19 ? 1 : "truee"#), Err(_));
         Ok(())
     }
 
     #[test]
-    fn path_ident() -> crate::Result<()> {
+    fn path_ident() -> Result {
         assert_eq!(
             tokenize("foo.bar.baz")?,
             vec![
@@ -962,7 +1058,7 @@ mod tests {
     }
 
     #[test]
-    fn less_or_equal() -> crate::Result<()> {
+    fn less_or_equal() -> Result {
         assert_eq!(
             tokenize("1 <= 10")?,
             vec![
@@ -984,7 +1080,7 @@ mod tests {
     }
 
     #[test]
-    fn cmp_equal() -> crate::Result<()> {
+    fn cmp_equal() -> Result {
         assert_eq!(
             tokenize("1 == 10")?,
             vec![
@@ -1006,13 +1102,13 @@ mod tests {
     }
 
     #[test]
-    fn cmp_invalid_equal() -> crate::Result<()> {
+    fn cmp_invalid_equal() -> Result {
         assert_matches!(tokenize("1 = 10"), Err(_));
         Ok(())
     }
 
     #[test]
-    fn void_literal() -> crate::Result<()> {
+    fn void_literal() -> Result {
         assert_eq!(
             tokenize("void")?,
             vec![Token {
@@ -1024,7 +1120,7 @@ mod tests {
     }
 
     #[test]
-    fn null_literal() -> crate::Result<()> {
+    fn null_literal() -> Result {
         assert_eq!(
             tokenize("null")?,
             vec![Token {
@@ -1036,7 +1132,7 @@ mod tests {
     }
 
     #[test]
-    fn null_str() -> crate::Result<()> {
+    fn null_str() -> Result {
         assert_eq!(
             tokenize("'null'")?,
             vec![Token {
@@ -1048,7 +1144,7 @@ mod tests {
     }
 
     #[test]
-    fn void_str() -> crate::Result<()> {
+    fn void_str() -> Result {
         assert_eq!(
             tokenize("\"void\"")?,
             vec![Token {
@@ -1060,7 +1156,7 @@ mod tests {
     }
 
     #[test]
-    fn walk_lexer() -> crate::Result<()> {
+    fn walk_lexer() -> Result {
         let mut lexer = Lexer::new("3 + 5.3 - 9.0")?;
         assert_matches!(
             lexer.advance(),

@@ -1,15 +1,99 @@
 use std::{collections::HashMap, f64::consts, rc::Rc};
 
 use crate::{
-    Error,
+    Punct,
     eval::fns::{Args, Function},
     lex::{Atom, Ident},
     parser::{Node, NodeKind},
-    value::{Array, Number, Object, Value},
+    span::Spanned,
+    value::{Array, Number, Object, Value, ValueType},
 };
 
 pub mod fns;
 pub mod std_fns;
+
+type Result<T> = std::result::Result<T, Spanned<RuntimeError>>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum RuntimeError {
+    #[error("{0}")]
+    OperationError(#[from] OpError),
+    #[error("object can be indexed only by strings, got {}", .0)]
+    InvalidObjectKey(ValueType),
+    #[error("array can be indexed only by integers, got {}", .0)]
+    InvalidArrayIndex(ValueType),
+    #[error("array or object are allowed to be indexed")]
+    InvalidIndexOperand,
+    #[error("unexpected value type, got {got}, expected {expected}")]
+    UnexpectedType { got: ValueType, expected: ValueType },
+    #[error("function call failed: {0}")]
+    FunctionCallError(#[from] FunctionCallError),
+    #[error("Integer overflow")]
+    IntegerOverflow,
+}
+
+impl RuntimeError {
+    pub fn help(&self) -> Option<String> {
+        match self {
+            RuntimeError::OperationError(op_error) => match op_error {
+                OpError::UnsupportedOperands(Punct::Add, ValueType::String, _) => {
+                    Some("string can be added only to another string, consider using `to_s` to convert the second operand to string".to_string())
+                }
+                _ => None,
+            },
+            RuntimeError::InvalidObjectKey(_) => Some("object can be only keys by string values".to_string()),
+            RuntimeError::InvalidArrayIndex(_) => Some("array can only be keyed by integers or rounded floats e.g. 3 or 3.0".to_string()),
+            RuntimeError::InvalidIndexOperand => None,
+            RuntimeError::UnexpectedType { got, expected } => None,
+            RuntimeError::FunctionCallError(function_call_error) => None,
+            RuntimeError::IntegerOverflow => None,
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum OpError {
+    #[error("unsupported {0} operands: {1} and {2}")]
+    UnsupportedOperands(Punct, ValueType, ValueType),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ArgConversionError {
+    #[error("expected {expected:?}, got {got}")]
+    UnexpectedArgumentType {
+        got: ValueType,
+        expected: &'static [ValueType],
+    },
+    #[error("{0}")]
+    IntConversionError(std::num::TryFromIntError),
+    #[error("{0}")]
+    FloatConversionError(std::num::TryFromIntError),
+}
+
+impl From<std::convert::Infallible> for ArgConversionError {
+    fn from(value: std::convert::Infallible) -> Self {
+        match value {}
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum FunctionCallError {
+    #[error("function {name} not found")]
+    NotFound { name: String },
+    #[error("unexpected number of arguments for function {name}, got {got}, expected {expected}")]
+    InvalidArity {
+        name: String,
+        got: usize,
+        expected: usize,
+    },
+    #[error("only functions can be called, got {0}")]
+    UncallableType(ValueType),
+    #[error("invalid function argument in pos {argument_pos}, {err}")]
+    InvalidArgument {
+        argument_pos: usize,
+        err: ArgConversionError,
+    },
+}
 
 #[derive(Debug, Default)]
 pub struct Env {
@@ -44,117 +128,129 @@ impl Env {
     }
 }
 
-pub fn eval(Node { span, kind }: Node, env: &Env) -> crate::Result<Value> {
+pub fn eval(Node { span, kind }: &Node, env: &Env) -> Result<Value> {
     match kind {
-        NodeKind::Op((punct, (lhs, rhs))) => match punct {
-            crate::lex::Punct::Add => eval(*lhs, env)?.add(eval(*rhs, env)?),
-            crate::lex::Punct::Mul => eval(*lhs, env)?.mul(eval(*rhs, env)?),
-            crate::lex::Punct::Sub => eval(*lhs, env)?.sub(eval(*rhs, env)?),
-            crate::lex::Punct::Div => eval(*lhs, env)?.div(eval(*rhs, env)?),
-            crate::lex::Punct::Less => eval(*lhs, env)?.lt(eval(*rhs, env)?),
-            crate::lex::Punct::LessOrEq => eval(*lhs, env)?.lte(eval(*rhs, env)?),
-            crate::lex::Punct::More => eval(*lhs, env)?.mt(eval(*rhs, env)?),
-            crate::lex::Punct::MoreOrEq => eval(*lhs, env)?.mte(eval(*rhs, env)?),
-            crate::lex::Punct::CmpEqual => eval(*lhs, env)?.eq(eval(*rhs, env)?),
-            crate::lex::Punct::CmpNotEqual => eval(*lhs, env)?.neq(eval(*rhs, env)?),
-            crate::lex::Punct::Or => {
-                let lhs = eval(*lhs, env)?;
-                if lhs.truthy() {
-                    Ok(lhs)
-                } else {
-                    eval(*rhs, env)
+        NodeKind::Op((punct, (lhs, rhs))) => {
+            let spanitize = |e: RuntimeError| Spanned::new(e, *span);
+            match punct {
+                crate::lex::Punct::Add => eval(lhs, env)?.add(&eval(rhs, env)?).map_err(spanitize),
+                crate::lex::Punct::Mul => eval(lhs, env)?.mul(&eval(rhs, env)?).map_err(spanitize),
+                crate::lex::Punct::Sub => eval(lhs, env)?.sub(&eval(rhs, env)?).map_err(spanitize),
+                crate::lex::Punct::Div => eval(lhs, env)?.div(&eval(rhs, env)?).map_err(spanitize),
+                crate::lex::Punct::Less => eval(lhs, env)?.lt(&eval(rhs, env)?).map_err(spanitize),
+                crate::lex::Punct::LessOrEq => {
+                    eval(lhs, env)?.lte(&eval(rhs, env)?).map_err(spanitize)
                 }
-            }
-            crate::lex::Punct::And => {
-                let lhs = eval(*lhs, env)?;
-                if lhs.truthy() {
-                    eval(*rhs, env)
-                } else {
-                    Ok(lhs)
+                crate::lex::Punct::More => eval(lhs, env)?.mt(&eval(rhs, env)?).map_err(spanitize),
+                crate::lex::Punct::MoreOrEq => {
+                    eval(lhs, env)?.mte(&eval(rhs, env)?).map_err(spanitize)
                 }
-            }
-            crate::lex::Punct::Pipe => {
-                let lhs = eval(*lhs, env)?;
-                // `x | f` and `x | f(a, b)` both mean "call f with x first".
-                let (callee, rest) = match &rhs.kind {
-                    NodeKind::Call { callee, args } => (callee, args),
-                    _ => (&rhs, &Vec::new()),
-                };
-                let name = callee_name(&callee.kind).map(String::from);
-                let callee = eval(*callee.clone(), env)?;
-                let mut values = Vec::with_capacity(rest.len() + 1);
-                values.push(lhs);
-                for arg in rest {
-                    values.push(eval(arg.clone(), env)?);
+                crate::lex::Punct::CmpEqual => {
+                    eval(lhs, env)?.eq(&eval(rhs, env)?).map_err(spanitize)
                 }
-                call_value(callee, Args(values), name.as_deref()).map_err(|e| e.with_span(rhs.span))
-            }
-            crate::lex::Punct::Coalesce => {
-                let lhs = eval(*lhs, env)?;
-                if lhs.nullish() {
-                    eval(*rhs, env)
-                } else {
-                    Ok(lhs)
+                crate::lex::Punct::CmpNotEqual => {
+                    eval(lhs, env)?.neq(&eval(rhs, env)?).map_err(spanitize)
                 }
+                crate::lex::Punct::Or => {
+                    let lhs = eval(lhs, env)?;
+                    if lhs.truthy() {
+                        Ok(lhs)
+                    } else {
+                        eval(rhs, env)
+                    }
+                }
+                crate::lex::Punct::And => {
+                    let lhs = eval(lhs, env)?;
+                    if lhs.truthy() {
+                        eval(rhs, env)
+                    } else {
+                        Ok(lhs)
+                    }
+                }
+                crate::lex::Punct::Pipe => {
+                    let lhs = eval(lhs, env)?;
+                    // `x | f` and `x | f(a, b)` both mean "call f with x first".
+                    let (callee, rest) = match &rhs.kind {
+                        NodeKind::Call { callee, args } => (callee, args),
+                        _ => (rhs, &Vec::new()),
+                    };
+                    let name = callee_name(&callee.kind).map(String::from);
+                    let callee = eval(callee, env)?;
+                    let mut values = Vec::with_capacity(rest.len() + 1);
+                    values.push(lhs);
+                    for arg in rest {
+                        values.push(eval(arg, env)?);
+                    }
+                    call_value(callee, Args(values), name.as_deref())
+                        .map_err(|e| Spanned::new(e.into(), *span))
+                }
+                crate::lex::Punct::Coalesce => {
+                    let lhs = eval(lhs, env)?;
+                    if lhs.nullish() {
+                        eval(rhs, env)
+                    } else {
+                        Ok(lhs)
+                    }
+                }
+                _ => unreachable!("The is no implementation to evaluate '{punct}'"),
             }
-            _ => Err(Error::new_with_span(format!("can't eval {punct}"), span)),
-        },
+        }
         NodeKind::Atom(atom) => match atom {
             // Attached scope shadows the function registry, so a payload field never gets
             // swallowed by a function of the same name.
-            crate::lex::Atom::Ident(Ident(i)) => match env.runtime_objects.0.get(&i) {
+            crate::lex::Atom::Ident(Ident(i)) => match env.runtime_objects.0.get(i) {
                 Some(v) => Ok(v.clone()),
                 None => match env.fns.get(i.as_str()) {
                     Some(f) => Ok(Value::Function(f.clone())),
                     None => Ok(Value::Void),
                 },
             },
-            crate::lex::Atom::StrLit(s) => Ok(Value::String(s)),
-            crate::lex::Atom::FloatLit(n) => Ok(Value::Number(Number::Float(n))),
-            crate::lex::Atom::IntLit(n) => Ok(Value::Number(Number::Int(n))),
-            crate::lex::Atom::BoolLit(b) => Ok(Value::Bool(b)),
+            crate::lex::Atom::StrLit(s) => Ok(Value::String(s.to_owned())),
+            crate::lex::Atom::FloatLit(n) => Ok(Value::Number(Number::Float(*n))),
+            crate::lex::Atom::IntLit(n) => Ok(Value::Number(Number::Int(*n))),
+            crate::lex::Atom::BoolLit(b) => Ok(Value::Bool(*b)),
             crate::lex::Atom::NullLit => Ok(Value::Null),
             crate::lex::Atom::VoidLit => Ok(Value::Void),
         },
         NodeKind::ArrayLit(arr) => Ok(Value::Array(Array(
-            arr.into_iter()
+            arr.iter()
                 .map(|v| eval(v, env))
-                .collect::<Result<Vec<_>, _>>()?,
+                .collect::<Result<Vec<_>>>()?,
         ))),
         NodeKind::ObjectLit(map) => Ok(Value::Object(Object(
-            map.into_iter()
-                .map(|(k, v)| Ok((k, eval(v, env)?)))
-                .collect::<crate::Result<_>>()?,
+            map.iter()
+                .map(|(k, v)| Ok((k.to_owned(), eval(v, env)?)))
+                .collect::<Result<_>>()?,
         ))),
         NodeKind::Turnary {
             operand,
             truth_node,
             false_node,
         } => {
-            let operand = eval(*operand, env)?;
+            let operand = eval(operand, env)?;
             if operand.truthy() {
-                eval(*truth_node, env)
+                eval(truth_node, env)
             } else {
-                eval(*false_node, env)
+                eval(false_node, env)
             }
         }
         NodeKind::Index { object, index } => {
-            let object = eval(*object, env)?;
+            let object = eval(object, env)?;
             match object {
                 Value::Object(Object(object)) => {
-                    let index = eval(*index, env)?;
-                    match index {
+                    let index_value = eval(index, env)?;
+                    match index_value {
                         Value::String(s) => Ok(object.get(&s).cloned().unwrap_or(Value::Void)),
                         Value::Null | Value::Void => Ok(Value::Void),
-                        _ => Err(Error::new_with_span(
-                            "object can be only indexed by string",
-                            span,
+                        _ => Err(Spanned::new(
+                            RuntimeError::InvalidObjectKey(index_value.value_type()),
+                            index.span,
                         )),
                     }
                 }
                 Value::Array(Array(array)) => {
-                    let index = eval(*index, env)?;
-                    match index {
+                    let index_value = eval(index, env)?;
+                    match index_value {
                         Value::Number(Number::Float(n)) if n >= 0. && n.fract() == 0. => {
                             Ok(array.get(n as usize).cloned().unwrap_or(Value::Void))
                         }
@@ -162,44 +258,38 @@ pub fn eval(Node { span, kind }: Node, env: &Env) -> crate::Result<Value> {
                             Ok(array.get(n as usize).cloned().unwrap_or(Value::Void))
                         }
                         Value::Null | Value::Void => Ok(Value::Void),
-                        _ => Err(Error::new_with_span(
-                            "array can be only indexed by unsigned integer like number",
-                            span,
+                        _ => Err(Spanned::new(
+                            RuntimeError::InvalidArrayIndex(index_value.value_type()),
+                            index.span,
                         )),
                     }
                 }
-                _ => Err(crate::Error::new_with_span(
-                    format!("only array or object can be indexed, got {object:?}",),
-                    span,
-                )),
+                _ => Err(Spanned::new(RuntimeError::InvalidIndexOperand, index.span)),
             }
         }
         NodeKind::Member {
             object,
             field: Ident(field),
         } => {
-            let object = eval(*object, env)?;
-            match object {
-                Value::Object(Object(obj)) => Ok(obj.get(&field).cloned().unwrap_or(Value::Void)),
+            let object_value = eval(object, env)?;
+            match object_value {
+                Value::Object(Object(obj)) => Ok(obj.get(field).cloned().unwrap_or(Value::Void)),
                 Value::Null | Value::Void => Ok(Value::Void),
-                _ => Err(Error::new_with_span(
-                    format!("only object can have member access, got {object:?}"),
-                    span,
-                )),
+                _ => Err(Spanned::new(RuntimeError::InvalidIndexOperand, object.span)),
             }
         }
         NodeKind::Call { callee, args } => {
             let name = callee_name(&callee.kind).map(String::from);
-            let callee = eval(*callee, env)?;
+            let callee = eval(callee, env)?;
             let args = Args(
-                args.into_iter()
+                args.iter()
                     .map(|v| eval(v, env))
-                    .collect::<crate::Result<Vec<_>>>()?,
+                    .collect::<Result<Vec<_>>>()?,
             );
-            call_value(callee, args, name.as_deref()).map_err(|e| e.with_span(span))
+            call_value(callee, args, name.as_deref()).map_err(|e| Spanned::new(e.into(), *span))
         }
         NodeKind::Negation(statement) => {
-            let value = eval(*statement, env)?;
+            let value = eval(statement, env)?;
             Ok(Value::Bool(!value.truthy()))
         }
     }
@@ -216,19 +306,22 @@ fn callee_name(node: &NodeKind) -> Option<&str> {
     }
 }
 
-fn call_value(callee: Value, args: Args, name: Option<&str>) -> crate::Result<Value> {
+fn call_value(
+    callee: Value,
+    args: Args,
+    name: Option<&str>,
+) -> std::result::Result<Value, FunctionCallError> {
     match callee {
         Value::Function(f) => f.call(args),
         // An unresolved ident evaluates to void like any other missing lookup, so name it here
         // rather than reporting a bare type mismatch.
-        Value::Void => Err(Error::new(match name {
-            Some(name) => format!("function '{name}' is not found"),
-            None => "only functions can be called, got void".into(),
-        })),
-        _ => Err(Error::new(format!(
-            "only functions can be called, got {}",
-            callee.value_type()
-        ))),
+        Value::Void => Err(match name {
+            Some(name) => FunctionCallError::NotFound {
+                name: name.to_owned(),
+            },
+            None => FunctionCallError::UncallableType(ValueType::Void),
+        }),
+        _ => Err(FunctionCallError::UncallableType(callee.value_type())),
     }
 }
 
@@ -241,9 +334,11 @@ mod tests {
     use super::*;
     use crate::{parser::parse_expr, span::Span, value::ValueType};
 
+    type Result<T> = std::result::Result<T, Spanned<RuntimeError>>;
+
     fn eval(node: Node) -> crate::Result<Value> {
         let env = Env::std();
-        super::eval(node, &env)
+        Ok(super::eval(&node, &env)?)
     }
 
     fn eval_str(s: &str) -> crate::Result<Value> {
@@ -253,7 +348,7 @@ mod tests {
             Value::Object(object) => env.attach_object(object),
             _ => panic!("scope return object value"),
         }
-        super::eval(node, &env)
+        Ok(super::eval(&node, &env)?)
     }
 
     #[test]
@@ -414,14 +509,18 @@ mod tests {
     #[ignore = "function calls are not supported yet"]
     fn arity_is_checked_before_evaluation() {
         let err = eval_str("payment.token | null_if").unwrap_err();
-        assert!(err.message.contains("takes 1 argument"), "{}", err.message);
+        assert!(
+            err.to_string().contains("takes 1 argument"),
+            "{}",
+            err.to_string()
+        );
     }
 
     #[test]
     fn function_errors_carry_the_call_span() {
         let err = eval_str("params.customer | trim").unwrap_err();
-        assert!(err.message.starts_with("trim:"), "{}", err.message);
-        assert_eq!(err.span, Some(Span::new(18..22)));
+        assert!(err.to_string().starts_with("trim:"), "{}", err.to_string());
+        assert_eq!(err.span(), Span::new(18..22));
     }
 
     #[test]
@@ -468,9 +567,9 @@ mod tests {
     fn unknown_function_errors() {
         let err = eval_str("params.first_name | nope").unwrap_err();
         assert!(
-            err.message.contains("'nope' is not found"),
+            err.to_string().contains("'nope' is not found"),
             "{}",
-            err.message
+            err.to_string()
         );
     }
 
@@ -508,16 +607,20 @@ mod tests {
     fn calling_a_non_function_errors() {
         let err = eval_str("payment.token()").unwrap_err();
         assert!(
-            err.message.contains("only functions can be called"),
+            err.to_string().contains("only functions can be called"),
             "{}",
-            err.message
+            err.to_string()
         );
     }
 
     #[test]
     fn arity_is_checked() {
         let err = eval_str("to_uppercase()").unwrap_err();
-        assert!(err.message.contains("takes 1 argument"), "{}", err.message);
+        assert!(
+            err.to_string().contains("takes 1 argument"),
+            "{}",
+            err.to_string()
+        );
     }
 
     #[test]
@@ -550,14 +653,22 @@ mod tests {
     #[test]
     fn integer_errors_do_not_panic() {
         let err = |src| eval(parse_expr(src).unwrap()).unwrap_err();
-        assert!(err("1 / 0").message.contains("division by zero"));
-        assert!(err("9223372036854775807 + 1").message.contains("overflow"));
+        assert!(err("1 / 0").to_string().contains("division by zero"));
         assert!(
-            err("0 - 9223372036854775807 - 2")
-                .message
+            err("9223372036854775807 + 1")
+                .to_string()
                 .contains("overflow")
         );
-        assert!(err("9223372036854775807 * 2").message.contains("overflow"));
+        assert!(
+            err("0 - 9223372036854775807 - 2")
+                .to_string()
+                .contains("overflow")
+        );
+        assert!(
+            err("9223372036854775807 * 2")
+                .to_string()
+                .contains("overflow")
+        );
     }
 
     #[test]

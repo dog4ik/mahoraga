@@ -1,6 +1,9 @@
 use std::{collections::HashMap, fmt::Display, rc::Rc};
 
-use crate::Function;
+use crate::{
+    Function, Punct,
+    eval::{ArgConversionError, OpError, RuntimeError},
+};
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Object(pub HashMap<String, Value>);
@@ -26,7 +29,7 @@ impl Object {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum Number {
     Float(f64),
     Int(i64),
@@ -60,14 +63,11 @@ impl PartialOrd for Number {
 macro_rules! impl_op {
     ($method: ident, $checked: ident, $sign: tt) => {
         /// Integer overflow and division by zero are errors, not panics.
-        pub fn $method(self, rhs: Self) -> crate::Result<Self> {
+        pub fn $method(self, rhs: Self) -> std::result::Result<Self, crate::eval::RuntimeError> {
             Ok(match (self, rhs) {
                 (Number::Int(lhs), Number::Int(rhs)) => {
                     Number::Int(lhs.$checked(rhs).ok_or_else(|| {
-                        crate::Error::new(format!(
-                            "integer overflow or division by zero: {lhs} {} {rhs}",
-                            stringify!($sign)
-                        ))
+                        $crate::eval::RuntimeError::IntegerOverflow
                     })?)
                 }
                 (lhs, rhs) => Number::Float(lhs.as_f64() $sign rhs.as_f64()),
@@ -112,12 +112,12 @@ macro_rules! impl_try_from_int {
     ($($num: ident),+) => {
         $(
         impl TryFrom<$num> for Number {
-            type Error = $crate::Error;
+            type Error = $crate::eval::ArgConversionError;
 
-            fn try_from(val: $num) -> std::result::Result<Self, $crate::Error> {
+            fn try_from(val: $num) -> ::std::result::Result<Self, Self::Error> {
                 match i64::try_from(val) {
                     Ok(v) => Ok(Number::Int(v)),
-                    Err(e) => Err($crate::Error::new(format!("failed to convert to int: {}", e)))
+                    Err(e) => Err($crate::eval::ArgConversionError::IntConversionError(e))
                 }
             }
         }
@@ -280,124 +280,122 @@ where
 }
 
 impl TryFrom<Value> for usize {
-    type Error = crate::Error;
+    type Error = ArgConversionError;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
             Value::Number(n) => Ok(n.into()),
-            _ => Err(crate::Error::new("expected number value")),
+            _ => Err(ArgConversionError::UnexpectedArgumentType {
+                got: value.value_type(),
+                expected: &[ValueType::Integer],
+            }),
         }
     }
 }
 
 impl TryFrom<Value> for f64 {
-    type Error = crate::Error;
+    type Error = ArgConversionError;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
             Value::Number(Number::Float(f)) => Ok(f),
             Value::Number(Number::Int(i)) => Ok(i as f64),
-            _ => Err(expected(ValueType::Float, &value)),
+            _ => Err(expected(&[ValueType::Float], &value)),
         }
     }
 }
 
 impl TryFrom<Value> for i64 {
-    type Error = crate::Error;
+    type Error = ArgConversionError;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
             Value::Number(Number::Int(t)) => Ok(t),
-            _ => Err(expected(ValueType::Integer, &value)),
+            _ => Err(expected(&[ValueType::Integer], &value)),
         }
     }
 }
 
 impl TryFrom<Value> for u32 {
-    type Error = crate::Error;
+    type Error = ArgConversionError;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
             Value::Number(number) => Ok(number.into()),
-            _ => Err(crate::Error::new("expected number")),
+            _ => Err(expected(&[ValueType::Integer, ValueType::Float], &value)),
         }
     }
 }
 
 impl TryFrom<Value> for bool {
-    type Error = crate::Error;
+    type Error = ArgConversionError;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
             Value::Bool(b) => Ok(b),
-            _ => Err(expected(ValueType::Bool, &value)),
+            _ => Err(expected(&[ValueType::Bool], &value)),
         }
     }
 }
 
 impl TryFrom<Value> for Object {
-    type Error = crate::Error;
+    type Error = ArgConversionError;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
             Value::Object(o) => Ok(o),
-            _ => Err(expected(ValueType::Object, &value)),
+            _ => Err(expected(&[ValueType::Object], &value)),
         }
     }
 }
 
 impl TryFrom<Value> for Array {
-    type Error = crate::Error;
+    type Error = ArgConversionError;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
             Value::Array(a) => Ok(a),
-            _ => Err(expected(ValueType::Array, &value)),
+            _ => Err(expected(&[ValueType::Array], &value)),
         }
     }
 }
 
 impl TryFrom<Value> for Number {
-    type Error = crate::Error;
+    type Error = ArgConversionError;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
             Value::Number(n) => Ok(n),
-            _ => Err(crate::Error::new(format!(
-                "expected integer or float value, got {}",
-                value.value_type()
-            ))),
+            _ => Err(expected(&[ValueType::Integer, ValueType::Float], &value)),
         }
     }
 }
 
-fn expected(ty: ValueType, got: &Value) -> crate::Error {
-    crate::Error::new(format!("expected {ty} value, got {}", got.value_type()))
+fn expected(ty: &'static [ValueType], got: &Value) -> ArgConversionError {
+    ArgConversionError::UnexpectedArgumentType {
+        got: got.value_type(),
+        expected: ty,
+    }
 }
 
 impl TryFrom<Value> for String {
-    type Error = crate::Error;
+    type Error = ArgConversionError;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
             Value::String(s) => Ok(s),
-            _ => Err(crate::Error::new(format!(
-                "expected string value, got {value}",
-            ))),
+            _ => Err(expected(&[ValueType::String], &value)),
         }
     }
 }
 
 impl TryFrom<Value> for Rc<Function> {
-    type Error = crate::Error;
+    type Error = ArgConversionError;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
             Value::Function(f) => Ok(f),
-            _ => Err(crate::Error::new(format!(
-                "expected function value, got {}",
-                value.value_type()
-            ))),
+            _ => Err(expected(&[ValueType::Function], &value)),
         }
     }
 }
@@ -405,17 +403,20 @@ impl TryFrom<Value> for Rc<Function> {
 impl<T> TryFrom<Value> for Vec<T>
 where
     T: TryFrom<Value>,
-    crate::Error: From<<T as TryFrom<Value>>::Error>,
+    crate::eval::ArgConversionError: From<<T as TryFrom<Value>>::Error>,
 {
-    type Error = crate::Error;
+    type Error = crate::eval::ArgConversionError;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
         match value {
             Value::Array(Array(array)) => array
                 .into_iter()
-                .map(|v| T::try_from(v).map_err(crate::Error::from))
-                .collect::<crate::Result<Vec<T>>>(),
-            _ => Err(crate::Error::new("expected array value")),
+                .map(|v| T::try_from(v).map_err(ArgConversionError::from))
+                .collect::<std::result::Result<Vec<T>, ArgConversionError>>(),
+            _ => Err(ArgConversionError::UnexpectedArgumentType {
+                got: value.value_type(),
+                expected: &[ValueType::Array],
+            }),
         }
     }
 }
@@ -437,32 +438,56 @@ impl Display for Value {
 
 #[allow(clippy::should_implement_trait)]
 impl Value {
-    pub fn add(self, other: Self) -> crate::Result<Self> {
+    pub fn add(&self, other: &Self) -> Result<Value, RuntimeError> {
         Ok(match (self, other) {
-            (Value::String(lhs), Value::String(rhs)) => Value::String(lhs + &rhs),
-            (Value::Number(lhs), Value::Number(rhs)) => Value::Number(lhs.add(rhs)?),
-            _ => return Err(crate::Error::new("unsupported add operands")),
+            (Value::String(lhs), Value::String(rhs)) => Value::String(lhs.to_owned() + rhs),
+            (Value::Number(lhs), Value::Number(rhs)) => Value::Number(lhs.add(*rhs)?),
+            _ => {
+                return Err(RuntimeError::OperationError(OpError::UnsupportedOperands(
+                    Punct::Add,
+                    self.value_type(),
+                    other.value_type(),
+                )));
+            }
         })
     }
 
-    pub fn sub(self, other: Self) -> crate::Result<Self> {
+    pub fn sub(&self, other: &Self) -> Result<Value, RuntimeError> {
         Ok(match (self, other) {
-            (Value::Number(lhs), Value::Number(rhs)) => Value::Number(lhs.sub(rhs)?),
-            _ => return Err(crate::Error::new("unsupported sub operands")),
+            (Value::Number(lhs), Value::Number(rhs)) => Value::Number(lhs.sub(*rhs)?),
+            _ => {
+                return Err(RuntimeError::OperationError(OpError::UnsupportedOperands(
+                    Punct::Sub,
+                    self.value_type(),
+                    other.value_type(),
+                )));
+            }
         })
     }
 
-    pub fn mul(self, other: Self) -> crate::Result<Self> {
+    pub fn mul(&self, other: &Self) -> Result<Value, RuntimeError> {
         Ok(match (self, other) {
-            (Value::Number(lhs), Value::Number(rhs)) => Value::Number(lhs.mul(rhs)?),
-            _ => return Err(crate::Error::new("unsupported mul operands")),
+            (Value::Number(lhs), Value::Number(rhs)) => Value::Number(lhs.mul(*rhs)?),
+            _ => {
+                return Err(RuntimeError::OperationError(OpError::UnsupportedOperands(
+                    Punct::Mul,
+                    self.value_type(),
+                    other.value_type(),
+                )));
+            }
         })
     }
 
-    pub fn div(self, other: Self) -> crate::Result<Self> {
+    pub fn div(&self, other: &Self) -> Result<Value, RuntimeError> {
         Ok(match (self, other) {
-            (Value::Number(lhs), Value::Number(rhs)) => Value::Number(lhs.div(rhs)?),
-            _ => return Err(crate::Error::new("unsupported div operands")),
+            (Value::Number(lhs), Value::Number(rhs)) => Value::Number(lhs.div(*rhs)?),
+            _ => {
+                return Err(RuntimeError::OperationError(OpError::UnsupportedOperands(
+                    Punct::Div,
+                    self.value_type(),
+                    other.value_type(),
+                )));
+            }
         })
     }
 
@@ -479,56 +504,80 @@ impl Value {
         }
     }
 
-    pub fn mt(&self, other: Value) -> Result<Value, crate::Error> {
+    pub fn mt(&self, other: &Value) -> Result<Value, RuntimeError> {
         Ok(Value::Bool(match (self, other) {
-            (Value::String(s), Value::String(o)) => *s > o,
-            (Value::Number(s), Value::Number(o)) => *s > o,
-            (Value::Bool(s), Value::Bool(o)) => *s & !o,
-            _ => return Err(crate::Error::new("unsupported mt operands")),
+            (Value::String(s), Value::String(o)) => s > o,
+            (Value::Number(s), Value::Number(o)) => s > o,
+            (Value::Bool(s), Value::Bool(o)) => s & !o,
+            _ => {
+                return Err(RuntimeError::OperationError(OpError::UnsupportedOperands(
+                    Punct::More,
+                    self.value_type(),
+                    other.value_type(),
+                )));
+            }
         }))
     }
 
-    pub fn mte(&self, other: Value) -> Result<Value, crate::Error> {
+    pub fn mte(&self, other: &Value) -> Result<Value, RuntimeError> {
         Ok(Value::Bool(match (self, other) {
-            (Value::String(s), Value::String(o)) => *s >= o,
-            (Value::Number(s), Value::Number(o)) => *s >= o,
-            (Value::Bool(s), Value::Bool(o)) => *s >= o,
-            _ => return Err(crate::Error::new("unsupported mte operands")),
+            (Value::String(s), Value::String(o)) => s >= o,
+            (Value::Number(s), Value::Number(o)) => s >= o,
+            (Value::Bool(s), Value::Bool(o)) => s >= o,
+            _ => {
+                return Err(RuntimeError::OperationError(OpError::UnsupportedOperands(
+                    Punct::MoreOrEq,
+                    self.value_type(),
+                    other.value_type(),
+                )));
+            }
         }))
     }
 
-    pub fn lt(&self, other: Value) -> Result<Value, crate::Error> {
+    pub fn lt(&self, other: &Value) -> Result<Value, RuntimeError> {
         Ok(Value::Bool(match (self, other) {
-            (Value::String(s), Value::String(o)) => *s < o,
-            (Value::Number(s), Value::Number(o)) => *s < o,
-            (Value::Bool(s), Value::Bool(o)) => !*s & o,
-            _ => return Err(crate::Error::new("unsupported lt operands")),
+            (Value::String(s), Value::String(o)) => s < o,
+            (Value::Number(s), Value::Number(o)) => s < o,
+            (Value::Bool(s), Value::Bool(o)) => !s & o,
+            _ => {
+                return Err(RuntimeError::OperationError(OpError::UnsupportedOperands(
+                    Punct::Less,
+                    self.value_type(),
+                    other.value_type(),
+                )));
+            }
         }))
     }
 
-    pub fn lte(&self, other: Value) -> Result<Value, crate::Error> {
+    pub fn lte(&self, other: &Value) -> Result<Value, RuntimeError> {
         Ok(Value::Bool(match (self, other) {
-            (Value::String(s), Value::String(o)) => *s <= o,
-            (Value::Number(s), Value::Number(o)) => *s <= o,
-            (Value::Bool(s), Value::Bool(o)) => *s <= o,
-            _ => return Err(crate::Error::new("unsupported lte operands")),
+            (Value::String(s), Value::String(o)) => s <= o,
+            (Value::Number(s), Value::Number(o)) => s <= o,
+            (Value::Bool(s), Value::Bool(o)) => s <= o,
+            _ => {
+                return Err(RuntimeError::OperationError(OpError::UnsupportedOperands(
+                    Punct::LessOrEq,
+                    self.value_type(),
+                    other.value_type(),
+                )));
+            }
         }))
     }
 
-    pub fn eq(&self, other: Value) -> Result<Value, crate::Error> {
+    pub fn eq(&self, other: &Value) -> Result<Value, RuntimeError> {
         Ok(Value::Bool(match (self, other) {
-            (Value::String(s), Value::String(o)) => *s == o,
-            (Value::Number(s), Value::Number(o)) => *s == o,
-            (Value::Bool(s), Value::Bool(o)) => *s == o,
+            (Value::String(s), Value::String(o)) => s == o,
+            (Value::Number(s), Value::Number(o)) => s == o,
+            (Value::Bool(s), Value::Bool(o)) => s == o,
             (Value::Null, Value::Null) => true,
-            (Value::Array(Array(s)), Value::Array(Array(o))) => *s == o,
-            (Value::Function(s), Value::Function(o)) => Rc::ptr_eq(s, &o),
+            (Value::Array(Array(s)), Value::Array(Array(o))) => s == o,
+            (Value::Function(s), Value::Function(o)) => Rc::ptr_eq(s, o),
             (Value::Void, Value::Void) => true,
             _ => false,
         }))
     }
 
-    pub fn neq(&self, other: Value) -> Result<Value, crate::Error> {
+    pub fn neq(&self, other: &Value) -> Result<Value, RuntimeError> {
         match self.eq(other)? {
             Value::Bool(b) => Ok(Value::Bool(!b)),
             _ => unreachable!("eq can evaluate only to bool"),

@@ -1,6 +1,10 @@
 use std::{collections::HashMap, rc::Rc};
 
-use crate::{Value, eval::fns::Function, value::Number};
+use crate::{
+    Value,
+    eval::{FunctionCallError, fns::Function},
+    value::Number,
+};
 
 #[macro_export]
 macro_rules! declare_fn {
@@ -15,7 +19,7 @@ macro_rules! declare_fn {
             ::std::rc::Rc::new($crate::Function {
                 name: $name,
                 help: Some($help),
-                f: Box::new($callable as fn($($arg),*) -> $crate::Result<$crate::Value>),
+                f: Box::new($callable as fn($($arg),*) -> ::std::result::Result<$crate::Value, $crate::FunctionCallError>),
             }),
         )
     };
@@ -53,20 +57,21 @@ pub fn std_fns() -> HashMap<&'static str, Rc<Function>> {
         ),
         declare_fn!(to_i(Number), "Convert number to integer"),
         declare_fn!(to_f(Number), "Convert number to float"),
+        declare_fn!(to_s(Value), "Convert any value to string representation"),
     ]
     .into_iter()
     .collect()
 }
 
-pub fn to_uppercase(val: String) -> crate::Result<Value> {
+pub fn to_uppercase(val: String) -> Result<Value, FunctionCallError> {
     Ok(Value::String(val.to_uppercase()))
 }
 
-pub fn concat(val: Vec<Value>) -> crate::Result<Value> {
+pub fn concat(val: Vec<Value>) -> Result<Value, FunctionCallError> {
     Ok(val.iter().map(Value::stringify).collect::<String>().into())
 }
 
-pub fn join(val: Vec<Value>, separator: String) -> crate::Result<Value> {
+pub fn join(val: Vec<Value>, separator: String) -> Result<Value, FunctionCallError> {
     let mut out = String::new();
     let len = val.len();
     if len == 0 {
@@ -82,45 +87,49 @@ pub fn join(val: Vec<Value>, separator: String) -> crate::Result<Value> {
     Ok(Value::String(out))
 }
 
-pub fn trim(val: String) -> crate::Result<Value> {
+pub fn trim(val: String) -> Result<Value, FunctionCallError> {
     Ok(Value::String(val.trim().to_owned()))
 }
 
-pub fn trim_start(val: String) -> crate::Result<Value> {
+pub fn trim_start(val: String) -> Result<Value, FunctionCallError> {
     Ok(Value::String(val.trim_start().to_owned()))
 }
 
-pub fn trim_end(val: String) -> crate::Result<Value> {
+pub fn trim_end(val: String) -> Result<Value, FunctionCallError> {
     Ok(Value::String(val.trim_end().to_owned()))
 }
 
-pub fn to_i(val: Number) -> crate::Result<Value> {
+pub fn to_i(val: Number) -> Result<Value, FunctionCallError> {
     match val {
         Number::Float(f) => Ok(Value::Number(Number::Int(f as i64))),
         Number::Int(_) => Ok(Value::Number(val)),
     }
 }
 
-pub fn to_f(val: Number) -> crate::Result<Value> {
+pub fn to_f(val: Number) -> Result<Value, FunctionCallError> {
     match val {
         Number::Float(_) => Ok(Value::Number(val)),
         Number::Int(i) => Ok(Value::Number(Number::Float(i as f64))),
     }
 }
 
-pub fn to_lowercase(val: String) -> crate::Result<Value> {
+pub fn to_s(val: Value) -> Result<Value, FunctionCallError> {
+    Ok(Value::String(val.stringify()))
+}
+
+pub fn to_lowercase(val: String) -> Result<Value, FunctionCallError> {
     Ok(Value::String(val.to_lowercase()))
 }
 
-pub fn blank_as_null(val: Value) -> crate::Result<Value> {
+pub fn blank_as_null(val: Value) -> Result<Value, FunctionCallError> {
     Ok(if val.blank() { Value::Null } else { val })
 }
 
-pub fn blank_as_void(val: Value) -> crate::Result<Value> {
+pub fn blank_as_void(val: Value) -> Result<Value, FunctionCallError> {
     Ok(if val.blank() { Value::Void } else { val })
 }
 
-pub fn void_as_null(val: Value) -> crate::Result<Value> {
+pub fn void_as_null(val: Value) -> Result<Value, FunctionCallError> {
     Ok(match val {
         Value::Void => Value::Null,
         _ => val,
@@ -130,12 +139,12 @@ pub fn void_as_null(val: Value) -> crate::Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Args, Callable, Env, eval_str, value::Object};
+    use crate::{Args, Callable, Env, eval::FunctionCallError, eval_str, value::Object};
 
     mod scaling {
-        use crate::value::Number;
+        use crate::{eval::FunctionCallError, value::Number};
 
-        pub fn scale(v: f64, by: u32) -> crate::Result<crate::Value> {
+        pub fn scale(v: f64, by: u32) -> Result<crate::Value, FunctionCallError> {
             Ok(crate::Value::Number(Number::Float(v * f64::from(by))))
         }
     }
@@ -170,7 +179,7 @@ mod tests {
     #[test]
     fn typed_arguments_reject_the_wrong_value() {
         let err = eval_str("'x' | scale(4)", &env()).unwrap_err();
-        assert!(err.message.contains("expected float value"), "{err}");
+        assert!(err.to_string().contains("expected float value"), "{err}");
     }
 
     #[test]
@@ -206,7 +215,7 @@ mod tests {
     fn callable_can_be_implemented_from_outside() {
         struct SkipBlank(Box<dyn Callable>);
         impl Callable for SkipBlank {
-            fn call(&self, args: Args) -> crate::Result<Value> {
+            fn call(&self, args: Args) -> Result<Value, FunctionCallError> {
                 if args.0.first().is_some_and(Value::blank) {
                     return Ok(Value::Void);
                 }
@@ -224,7 +233,7 @@ mod tests {
                 name: "upper",
                 help: None,
                 f: Box::new(SkipBlank(Box::new(
-                    to_uppercase as fn(String) -> crate::Result<Value>,
+                    to_uppercase as fn(String) -> Result<Value, FunctionCallError>,
                 ))),
             }),
         );
