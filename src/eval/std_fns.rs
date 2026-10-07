@@ -3,7 +3,7 @@ use std::{collections::HashMap, rc::Rc};
 use crate::{
     Value,
     eval::{FunctionCallError, fns::Function},
-    value::Number,
+    value::{Array, Number, Object},
 };
 
 #[macro_export]
@@ -17,7 +17,7 @@ macro_rules! declare_fn {
         (
             $name,
             ::std::rc::Rc::new($crate::Function {
-                name: $name,
+                name: ::std::rc::Rc::from($name),
                 help: Some($help),
                 f: Box::new($callable as fn($($arg),*) -> ::std::result::Result<$crate::Value, $crate::FunctionCallError>),
             }),
@@ -27,6 +27,25 @@ macro_rules! declare_fn {
 
 pub fn std_fns() -> HashMap<&'static str, Rc<Function>> {
     [
+        declare_fn!(len(Value), "Length of the value, 0 if not applicable"),
+        declare_fn!(clamp(Number, i64, i64), "Clamp the value between x and y"),
+        declare_fn!(
+            sum(Vec<Value>),
+            "Sum all the elements of the array, non number elements are ignored"
+        ),
+        declare_fn!(
+            min(Vec<Value>),
+            "Get min element in array, non number elements are ignored"
+        ),
+        declare_fn!(
+            max(Vec<Value>),
+            "Get max element in array, non number elements are ignored"
+        ),
+        declare_fn!(
+            pluck(Vec<Value>, String),
+            "Create a new array from indexing into every element object"
+        ),
+        declare_fn!(log_10(Number), "Calculate log 10 of the number"),
         declare_fn!(to_uppercase(String), "Convert string to uppercase"),
         declare_fn!(to_lowercase(String), "Convert string to lowercase"),
         declare_fn!(blank_as_null(Value), "Convert any blank value to null"),
@@ -63,12 +82,81 @@ pub fn std_fns() -> HashMap<&'static str, Rc<Function>> {
     .collect()
 }
 
+pub fn clamp(number: Number, min: i64, max: i64) -> Result<Value, FunctionCallError> {
+    Ok(Value::Number(match number {
+        Number::Float(f) => f.clamp(min as f64, max as f64).into(),
+        Number::Int(i) => i.clamp(min, max).into(),
+    }))
+}
+
+pub fn sum(elements: Vec<Value>) -> Result<Value, FunctionCallError> {
+    Ok(Value::Number(
+        elements
+            .into_iter()
+            .filter_map(|v| match v {
+                Value::Number(number) => Some(number),
+                _ => None,
+            })
+            .fold(Number::Int(0), |acc, n| acc.add(n).unwrap_or_default()),
+    ))
+}
+
+pub fn max(elements: Vec<Value>) -> Result<Value, FunctionCallError> {
+    match elements
+        .into_iter()
+        .filter_map(|v| match v {
+            Value::Number(number) => Some(number),
+            _ => None,
+        })
+        .max_by(|a, b| a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal))
+    {
+        Some(n) => Ok(Value::Number(n)),
+        None => Ok(Value::Void),
+    }
+}
+
+pub fn min(elements: Vec<Value>) -> Result<Value, FunctionCallError> {
+    match elements
+        .into_iter()
+        .filter_map(|v| match v {
+            Value::Number(number) => Some(number),
+            _ => None,
+        })
+        .min_by(|a, b| a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal))
+    {
+        Some(n) => Ok(Value::Number(n)),
+        None => Ok(Value::Void),
+    }
+}
+
+pub fn pluck(elements: Vec<Value>, key: String) -> Result<Value, FunctionCallError> {
+    let arr: Vec<Value> = elements
+        .into_iter()
+        .filter_map(|v| match v {
+            Value::Object(Object(mut obj)) => Some(obj.remove(&key)?),
+            _ => None,
+        })
+        .collect();
+    Ok(Value::Array(Array(arr)))
+}
+
 pub fn to_uppercase(val: String) -> Result<Value, FunctionCallError> {
     Ok(Value::String(val.to_uppercase()))
 }
 
 pub fn concat(val: Vec<Value>) -> Result<Value, FunctionCallError> {
     Ok(val.iter().map(Value::stringify).collect::<String>().into())
+}
+
+pub fn log_10(val: Number) -> Result<Value, FunctionCallError> {
+    Ok(Value::Number(
+        match val {
+            Number::Float(f) => f,
+            Number::Int(i) => i as f64,
+        }
+        .log10()
+        .into(),
+    ))
 }
 
 pub fn join(val: Vec<Value>, separator: String) -> Result<Value, FunctionCallError> {
@@ -89,6 +177,15 @@ pub fn join(val: Vec<Value>, separator: String) -> Result<Value, FunctionCallErr
 
 pub fn trim(val: String) -> Result<Value, FunctionCallError> {
     Ok(Value::String(val.trim().to_owned()))
+}
+
+pub fn len(val: Value) -> Result<Value, FunctionCallError> {
+    Ok(Value::Number(Number::Int(match val {
+        Value::String(s) => s.chars().count(),
+        Value::Object(object) => object.len(),
+        Value::Array(array) => array.len(),
+        Value::Number(_) | Value::Bool(_) | Value::Function(_) | Value::Null | Value::Void => 0,
+    } as i64)))
 }
 
 pub fn trim_start(val: String) -> Result<Value, FunctionCallError> {
@@ -164,7 +261,7 @@ mod tests {
     fn a_named_declaration_registers_under_its_name() {
         let env = env();
         let f = env.fns.get("scale").expect("registered under `scale`");
-        assert_eq!(f.name, "scale");
+        assert_eq!(&*f.name, "scale");
         assert_eq!(f.arity(), 2, "the piped input counts");
         assert_eq!(
             eval_str("3 | scale(4)", &env).unwrap(),
@@ -230,7 +327,7 @@ mod tests {
         env.fns.insert(
             "upper",
             Rc::new(Function {
-                name: "upper",
+                name: Rc::from("upper"),
                 help: None,
                 f: Box::new(SkipBlank(Box::new(
                     to_uppercase as fn(String) -> Result<Value, FunctionCallError>,

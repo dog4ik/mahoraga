@@ -93,6 +93,9 @@ pub enum FunctionCallError {
         argument_pos: usize,
         err: ArgConversionError,
     },
+    /// Raised by a function implemented outside of mahoraga, e.g. a host callback.
+    #[error("{0}")]
+    External(String),
 }
 
 #[derive(Debug, Default)]

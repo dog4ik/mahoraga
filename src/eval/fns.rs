@@ -1,4 +1,7 @@
-use std::fmt::{Debug, Display};
+use std::{
+    fmt::{Debug, Display},
+    rc::Rc,
+};
 
 use crate::{Value, eval::FunctionCallError};
 
@@ -16,7 +19,7 @@ impl Args {
 }
 
 pub struct Function {
-    pub name: &'static str,
+    pub name: Rc<str>,
     pub help: Option<&'static str>,
     pub f: Box<dyn Callable>,
 }

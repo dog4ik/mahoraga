@@ -35,6 +35,12 @@ pub enum Number {
     Int(i64),
 }
 
+impl Default for Number {
+    fn default() -> Self {
+        Self::Int(0)
+    }
+}
+
 impl Number {
     pub fn as_f64(&self) -> f64 {
         match self {
