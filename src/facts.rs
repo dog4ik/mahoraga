@@ -104,7 +104,9 @@ pub fn collect_facts(node: &Node, out: &mut Facts) {
             collect_facts(truth_node, out);
             collect_facts(false_node, out);
         }
-        NodeKind::Member { object, .. } | NodeKind::Negation(object) => collect_facts(object, out),
+        NodeKind::Member { object, .. }
+        | NodeKind::Negation(object)
+        | NodeKind::NonNullishAssertion(object) => collect_facts(object, out),
         NodeKind::Index { object, index } => {
             collect_facts(object, out);
             collect_facts(index, out);

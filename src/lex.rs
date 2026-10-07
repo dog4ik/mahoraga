@@ -248,7 +248,7 @@ impl Punct {
 
     pub fn postfix_binding_power(&self) -> Option<(u8, ())> {
         match self {
-            Punct::Dot | Punct::OpenBracket | Punct::OpenParen => Some((16, ())),
+            Punct::Dot | Punct::OpenBracket | Punct::OpenParen | Punct::Bang => Some((16, ())),
             _ => None,
         }
     }

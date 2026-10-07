@@ -22,6 +22,8 @@ pub enum ParserError {
     UnexpectedToken { got: Tok, expected: String },
     #[error("unexpected end of input, expected {expected}")]
     UnexpectedEof { expected: String },
+    #[error("more than one nullish assertion operator")]
+    MultipleConsucutiveNullishAssertions,
     #[error("expected end of input, got {got}")]
     ExpectedEof { got: String },
 }
@@ -31,6 +33,10 @@ impl ParserError {
         match self {
             ParserError::InvalidMemberAccess => None,
             ParserError::InvalidKey => None,
+            ParserError::MultipleConsucutiveNullishAssertions => Some(
+                "chained nullish assertions don't have additional effect, one will be enough"
+                    .to_string(),
+            ),
             ParserError::UnexpectedToken { .. } => None,
             ParserError::UnexpectedEof { .. } => None,
             ParserError::ExpectedEof { .. } => None,
@@ -81,6 +87,7 @@ impl Display for Node {
                 write!(f, "{})", args.last().expect("length checked above"))
             }
             NodeKind::Negation(node) => write!(f, "!{node}"),
+            NodeKind::NonNullishAssertion(node) => write!(f, "{node}!"),
             NodeKind::ArrayLit(nodes) => {
                 f.write_char('[')?;
                 if nodes.is_empty() {
@@ -129,6 +136,7 @@ pub enum NodeKind {
         callee: Box<Node>,
         args: Vec<Node>,
     },
+    NonNullishAssertion(Box<Node>),
     Negation(Box<Node>),
     ArrayLit(Vec<Node>),
     ObjectLit(HashMap<String, Node>),
@@ -354,6 +362,25 @@ impl Parser {
                         }
                     }
 
+                    Punct::Bang => {
+                        if matches!(
+                            lhs,
+                            Node {
+                                kind: NodeKind::NonNullishAssertion(_),
+                                ..
+                            }
+                        ) {
+                            return Err(Spanned::new(
+                                ParserError::MultipleConsucutiveNullishAssertions,
+                                lhs.span,
+                            ));
+                        }
+                        lhs = Node {
+                            span: Span::new(lhs.span.start..lhs.span.end + 1),
+                            kind: NodeKind::NonNullishAssertion(Box::new(lhs)),
+                        }
+                    }
+
                     Punct::Dot => match self.lex.advance() {
                         Some(Token {
                             tok: Tok::Atom(Atom::Ident(field)),
@@ -537,6 +564,13 @@ mod tests {
         Node {
             span: span.into(),
             kind: NodeKind::Negation(Box::new(node)),
+        }
+    }
+
+    fn non_nullish(node: Node, span: impl Into<Span>) -> Node {
+        Node {
+            span: span.into(),
+            kind: NodeKind::NonNullishAssertion(Box::new(node)),
         }
     }
 
@@ -1004,6 +1038,21 @@ mod tests {
                 array(vec![atom(1, 2..3), atom(2, 5..6), atom(3, 8..9)], 1..10),
                 0..10
             )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn non_nullish_assertion() -> Result<()> {
+        assert_eq!(parse_expr("5!")?, non_nullish(atom(5, 0..1), 0..2));
+        Ok(())
+    }
+
+    #[test]
+    fn non_nullish_assertion_chain_should_fail() -> Result<()> {
+        assert!(
+            dbg!(parse_expr("5!!")).is_err(),
+            "double assertion operator should not parse"
         );
         Ok(())
     }

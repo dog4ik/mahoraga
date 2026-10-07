@@ -32,6 +32,8 @@ pub enum RuntimeError {
     IntegerOverflow,
     #[error("division by zero")]
     DivisionByZero,
+    #[error("non-nulish assertion violated")]
+    NonNullishAssertion,
 }
 
 impl RuntimeError {
@@ -50,6 +52,7 @@ impl RuntimeError {
             RuntimeError::FunctionCallError(_) => None,
             RuntimeError::IntegerOverflow => None,
             RuntimeError::DivisionByZero => None,
+            RuntimeError::NonNullishAssertion => Some("accesses annotated with non nullish operator must not be void or null".to_string()),
         }
     }
 }
@@ -299,6 +302,15 @@ pub fn eval(Node { span, kind }: &Node, env: &Env) -> Result<Value> {
             let value = eval(statement, env)?;
             Ok(Value::Bool(!value.truthy()))
         }
+
+        NodeKind::NonNullishAssertion(statement) => {
+            let value = eval(statement, env)?;
+            if value.nullish() {
+                Err(Spanned::new(RuntimeError::NonNullishAssertion, *span))
+            } else {
+                Ok(value)
+            }
+        }
     }
 }
 
@@ -354,6 +366,10 @@ mod tests {
             _ => panic!("scope return object value"),
         }
         Ok(super::eval(&node, &env)?)
+    }
+
+    fn err(s: &str) -> crate::ErrorKind {
+        eval(parse_expr(s).unwrap()).unwrap_err()
     }
 
     #[test]
@@ -632,7 +648,6 @@ mod tests {
 
     #[test]
     fn integer_errors_do_not_panic() {
-        let err = |src| eval(parse_expr(src).unwrap()).unwrap_err();
         assert!(err("1 / 0").to_string().contains("division by zero"));
         assert!(
             err("9223372036854775807 + 1")
@@ -661,5 +676,16 @@ mod tests {
         assert_eq!(ev("0 - 1"), Value::Number((-1).into()));
         assert_eq!(ev("5.9 + 0.1"), Value::Number(6.0.into()));
         assert_eq!(ev("5859 / 100."), Value::Number(58.59.into()));
+    }
+
+    #[test]
+    fn non_nullish_assertion() {
+        err("null!");
+        err("void!");
+        assert_eq!(ev("(5.9 + 0.1)!"), Value::Number(6.0.into()));
+        assert_eq!(ev("[]!"), Value::Array(Array::default()));
+        assert_eq!(ev("{}!"), Value::Object(Object::default()));
+        assert_eq!(ev("!5!"), Value::Bool(false));
+        assert_eq!(ev("!0!"), Value::Bool(true));
     }
 }
