@@ -583,7 +583,7 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
                     Tok::Atom(Atom::IntLit(num))
                 }
             }
-            b'a'..=b'z' | b'A'..=b'Z' => {
+            b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
                 i += 1;
                 while bytes.get(i).is_some_and(|next| {
                     !next.is_ascii_whitespace()
@@ -1070,6 +1070,36 @@ mod tests {
                 Token {
                     tok: Tok::Atom(Atom::Ident(Ident("baz".into()))),
                     span: Span { start: 8, end: 11 }
+                }
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn path_ident_with_underscores() -> Result {
+        assert_eq!(
+            tokenize("_foo.__bar.___baz___")?,
+            vec![
+                Token {
+                    tok: Tok::Atom(Atom::Ident(Ident("_foo".into()))),
+                    span: Span { start: 0, end: 4 }
+                },
+                Token {
+                    tok: punct_tok!("."),
+                    span: Span { start: 4, end: 5 }
+                },
+                Token {
+                    tok: Tok::Atom(Atom::Ident(Ident("__bar".into()))),
+                    span: Span { start: 5, end: 10 }
+                },
+                Token {
+                    tok: punct_tok!("."),
+                    span: Span { start: 10, end: 11 }
+                },
+                Token {
+                    tok: Tok::Atom(Atom::Ident(Ident("___baz___".into()))),
+                    span: Span { start: 11, end: 20 }
                 }
             ]
         );
