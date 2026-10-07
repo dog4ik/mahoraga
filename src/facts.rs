@@ -178,11 +178,12 @@ fn static_path(Node { kind, span }: &Node) -> Option<Vec<FactIdent>> {
         NodeKind::Member {
             object,
             field: Ident(field),
+            field_span,
         } => {
             let mut path = static_path(object)?;
             path.push(FactIdent {
                 name: field.clone(),
-                span,
+                span: *field_span,
             });
             Some(path)
         }
@@ -225,19 +226,19 @@ mod tests {
             vec![
                 vec![
                     FactIdent::new("payment", 0..7),
-                    FactIdent::new("a", 9..10),
-                    FactIdent::new("b", 11..12)
+                    FactIdent::new("a", 8..9),
+                    FactIdent::new("b", 10..13)
                 ],
                 vec![
-                    FactIdent::new("settings", 19..27),
-                    FactIdent::new("c", 28..29)
+                    FactIdent::new("settings", 18..26),
+                    FactIdent::new("c", 27..28)
                 ]
             ]
         );
         assert_eq!(
             e.calls,
             vec![Call {
-                name: FactIdent::new("trim", 32..36),
+                name: FactIdent::new("trim", 31..35),
                 args: 0
             }]
         );

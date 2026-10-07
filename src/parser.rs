@@ -64,7 +64,7 @@ impl Display for Node {
             } => {
                 write!(f, "{operand} ? {truth_node} : {false_node}")
             }
-            NodeKind::Member { object, field } => {
+            NodeKind::Member { object, field, .. } => {
                 write!(f, "{object}.{field}")
             }
             NodeKind::Index { object, index } => {
@@ -119,6 +119,7 @@ pub enum NodeKind {
     Member {
         object: Box<Node>,
         field: Ident,
+        field_span: Span,
     },
     Index {
         object: Box<Node>,
@@ -363,6 +364,7 @@ impl Parser {
                                 kind: NodeKind::Member {
                                     object: Box::new(lhs),
                                     field,
+                                    field_span: ident_span,
                                 },
                             }
                         }
@@ -477,12 +479,18 @@ mod tests {
         }
     }
 
-    fn member(object: Node, field: &str, span: impl Into<Span>) -> Node {
+    fn member(
+        object: Node,
+        field: &str,
+        span: impl Into<Span>,
+        field_span: impl Into<Span>,
+    ) -> Node {
         Node {
             span: span.into(),
             kind: NodeKind::Member {
                 object: Box::new(object),
                 field: Ident(field.into()),
+                field_span: field_span.into(),
             },
         }
     }
@@ -660,7 +668,12 @@ mod tests {
     fn path() -> Result<()> {
         assert_eq!(
             parse_expr("test.mail.ru")?,
-            member(member(ident("test", 0..4), "mail", 0..9), "ru", 0..12)
+            member(
+                member(ident("test", 0..4), "mail", 0..9, 5..9),
+                "ru",
+                0..12,
+                10..12
+            )
         );
         Ok(())
     }
@@ -764,7 +777,7 @@ mod tests {
             parse_expr("a[b.test]")?,
             index(
                 ident("a", 0..1),
-                member(ident("b", 2..3), "test", 2..8),
+                member(ident("b", 2..3), "test", 2..8, 4..8),
                 0..9
             )
         );
@@ -775,7 +788,7 @@ mod tests {
     fn path_member() -> Result<()> {
         assert_eq!(
             parse_expr("a.b.c")?,
-            member(member(ident("a", 0..1), "b", 0..3), "c", 0..5)
+            member(member(ident("a", 0..1), "b", 0..3, 2..3), "c", 0..5, 4..5)
         );
         Ok(())
     }
@@ -787,7 +800,7 @@ mod tests {
             array(
                 vec![
                     atom(1, 1..2),
-                    member(ident("a", 4..5), "b", 4..7),
+                    member(ident("a", 4..5), "b", 4..7, 6..7),
                     turnary(ident("c", 9..10), atom(2, 13..14), atom(3, 17..18), 9..18),
                     op(
                         Punct::Mul,
@@ -879,7 +892,7 @@ mod tests {
             call(
                 ident("foo", 0..3),
                 vec![
-                    member(ident("a", 4..5), "b", 4..7),
+                    member(ident("a", 4..5), "b", 4..7, 6..7),
                     turnary(ident("c", 9..10), atom(1, 13..14), atom(2, 17..18), 9..18),
                     op(
                         Punct::Mul,
@@ -903,7 +916,7 @@ mod tests {
             call(
                 index(
                     call(
-                        member(ident("a", 0..1), "b", 0..3),
+                        member(ident("a", 0..1), "b", 0..3, 2..3),
                         vec![atom(1, 4..5)],
                         0..6
                     ),
@@ -978,7 +991,7 @@ mod tests {
     fn negation_of_object_field() -> Result<()> {
         assert_eq!(
             parse_expr("!test.value")?,
-            negation(member(ident("test", 1..5), "value", 1..11), 0..11)
+            negation(member(ident("test", 1..5), "value", 1..11, 6..11), 0..11)
         );
         Ok(())
     }

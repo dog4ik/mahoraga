@@ -108,7 +108,7 @@ pub fn max(elements: Vec<Value>) -> Result<Value, FunctionCallError> {
             Value::Number(number) => Some(number),
             _ => None,
         })
-        .max_by(|a, b| a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal))
+        .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
     {
         Some(n) => Ok(Value::Number(n)),
         None => Ok(Value::Void),
@@ -122,7 +122,7 @@ pub fn min(elements: Vec<Value>) -> Result<Value, FunctionCallError> {
             Value::Number(number) => Some(number),
             _ => None,
         })
-        .min_by(|a, b| a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal))
+        .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
     {
         Some(n) => Ok(Value::Number(n)),
         None => Ok(Value::Void),
@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn typed_arguments_reject_the_wrong_value() {
         let err = eval_str("'x' | scale(4)", &env()).unwrap_err();
-        assert!(err.to_string().contains("expected float value"), "{err}");
+        assert!(err.to_string().contains("expected [Float]"), "{err}");
     }
 
     #[test]

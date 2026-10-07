@@ -87,7 +87,18 @@ impl Number {
     impl_op!(add, checked_add, +);
     impl_op!(sub, checked_sub, -);
     impl_op!(mul, checked_mul, *);
-    impl_op!(div, checked_div, /);
+
+    pub fn div(self, rhs: Self) -> std::result::Result<Self, RuntimeError> {
+        if let Number::Int(0) = rhs {
+            return Err(RuntimeError::DivisionByZero);
+        }
+        Ok(match (self, rhs) {
+            (Number::Int(lhs), Number::Int(rhs)) => {
+                Number::Int(lhs.checked_div(rhs).ok_or(RuntimeError::IntegerOverflow)?)
+            }
+            (lhs, rhs) => Number::Float(lhs.as_f64() / rhs.as_f64()),
+        })
+    }
 }
 
 impl From<f64> for Number {
