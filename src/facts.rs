@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::{
     Atom::{self},
     Ident, NodeKind, Punct, Span,
@@ -40,9 +38,6 @@ pub enum PathComponent {
     Object(Box<PathComponent>),
     ArrayIdx(Number),
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Paths(HashMap<String, Paths>);
 
 #[derive(Debug, Clone, Default)]
 pub struct Facts {
@@ -130,6 +125,7 @@ pub fn collect_facts(node: &Node, out: &mut Facts) {
             }
             None => collect_callee(callee, &[], out),
         },
+        NodeKind::Closure { args: _, body } => collect_facts(body, out),
     }
 }
 

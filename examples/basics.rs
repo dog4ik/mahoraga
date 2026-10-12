@@ -1,4 +1,10 @@
-fn my_custom_fn(s: String, n: usize) -> Result<mahoraga::Value, mahoraga::FunctionCallError> {
+use mahoraga::RuntimeEnv;
+
+fn my_custom_fn(
+    _: &mut RuntimeEnv<'_>,
+    s: String,
+    n: usize,
+) -> Result<mahoraga::Value, mahoraga::FunctionCallError> {
     Ok(std::iter::repeat_n(s, n).collect::<String>().into())
 }
 

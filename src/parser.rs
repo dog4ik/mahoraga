@@ -20,10 +20,12 @@ pub enum ParserError {
     InvalidKey,
     #[error("unexpected token '{got}', expected {expected}")]
     UnexpectedToken { got: Tok, expected: String },
-    #[error("unexpected end of input, expected {expected}")]
+    #[error("expected {expected}, got the end of the input")]
     UnexpectedEof { expected: String },
     #[error("more than one nullish assertion operator")]
     MultipleConsucutiveNullishAssertions,
+    #[error("invalid closure argument, got {:?}", got)]
+    InvalidClosureArgument { got: Option<Tok> },
     #[error("expected end of input, got {got}")]
     ExpectedEof { got: String },
 }
@@ -40,6 +42,9 @@ impl ParserError {
             ParserError::UnexpectedToken { .. } => None,
             ParserError::UnexpectedEof { .. } => None,
             ParserError::ExpectedEof { .. } => None,
+            ParserError::InvalidClosureArgument { .. } => {
+                Some("only identifiers are allowed to be closure arguments".to_string())
+            }
         }
     }
 }
@@ -59,9 +64,23 @@ impl Node {
     }
 }
 
-impl Display for Node {
+fn fmt_comma_separated<T: Display>(
+    f: &mut std::fmt::Formatter<'_>,
+    items: &[T],
+    end: char,
+) -> std::fmt::Result {
+    if items.is_empty() {
+        return f.write_char(end);
+    }
+    for arg in items.iter().take(items.len() - 1) {
+        write!(f, "{arg}, ")?;
+    }
+    write!(f, "{}{end}", items.last().expect("length checked above"))
+}
+
+impl Display for NodeKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.kind {
+        match &self {
             NodeKind::Op((op, (lhs, rhs))) => write!(f, "{lhs} {op} {rhs}"),
             NodeKind::Turnary {
                 operand,
@@ -78,30 +97,18 @@ impl Display for Node {
             }
             NodeKind::Call { callee, args } => {
                 write!(f, "{callee}(",)?;
-                if args.is_empty() {
-                    f.write_char(')')?;
-                }
-                for arg in args.iter().take(args.len() - 1) {
-                    write!(f, "{arg}, ")?;
-                }
-                write!(f, "{})", args.last().expect("length checked above"))
+                fmt_comma_separated(f, args, ')')
             }
             NodeKind::Negation(node) => write!(f, "!{node}"),
             NodeKind::NonNullishAssertion(node) => write!(f, "{node}!"),
             NodeKind::ArrayLit(nodes) => {
                 f.write_char('[')?;
-                if nodes.is_empty() {
-                    f.write_char(']')?;
-                }
-                for arg in nodes.iter().take(nodes.len() - 1) {
-                    write!(f, "{arg}, ")?;
-                }
-                write!(f, "{}]", nodes.last().expect("length checked above"))
+                fmt_comma_separated(f, nodes, ']')
             }
             NodeKind::ObjectLit(hash_map) => {
                 f.write_char('{')?;
                 if hash_map.is_empty() {
-                    f.write_char('}')?;
+                    return f.write_char('}');
                 }
                 let mut iter = hash_map.iter().take(hash_map.len() - 1);
                 for (key, value) in &mut iter {
@@ -110,8 +117,20 @@ impl Display for Node {
                 let (last_key, last_value) = iter.next().expect("length checked above");
                 write!(f, "\"{last_key}\": {last_value}}}")
             }
+
+            NodeKind::Closure { args, body } => {
+                f.write_char('|')?;
+                fmt_comma_separated(f, args, '|')?;
+                write!(f, " {}", body)
+            }
             NodeKind::Atom(atom) => write!(f, "{atom}"),
         }
+    }
+}
+
+impl Display for Node {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.kind.fmt(f)
     }
 }
 
@@ -135,6 +154,10 @@ pub enum NodeKind {
     Call {
         callee: Box<Node>,
         args: Vec<Node>,
+    },
+    Closure {
+        args: Vec<Ident>,
+        body: Box<Node>,
     },
     NonNullishAssertion(Box<Node>),
     Negation(Box<Node>),
@@ -233,6 +256,58 @@ impl Parser {
         Ok((NodeKind::ObjectLit(entries), end))
     }
 
+    pub fn parse_closure(&mut self) -> Result<(NodeKind, Span)> {
+        let mut args = Vec::new();
+        if !matches!(self.lex.peek(), Some(Token { tok: Tok::Punct(p), .. }) if p == Punct::Pipe) {
+            match self.lex.advance() {
+                Some(Token {
+                    tok: Tok::Atom(Atom::Ident(ident)),
+                    span: _,
+                }) => args.push(ident),
+                rest => {
+                    return Err(Spanned::new(
+                        ParserError::InvalidClosureArgument {
+                            got: rest.clone().map(|v| v.tok),
+                        },
+                        rest.map(|a| a.span).unwrap_or_else(|| self.lex.end_span()),
+                    ));
+                }
+            }
+
+            while let Some(Token {
+                tok: punct_tok!(","),
+                ..
+            }) = self.lex.peek()
+            {
+                self.lex.advance();
+                match self.lex.advance() {
+                    Some(Token {
+                        tok: Tok::Atom(Atom::Ident(ident)),
+                        span: _,
+                    }) => args.push(ident),
+                    rest => {
+                        return Err(Spanned::new(
+                            ParserError::InvalidClosureArgument {
+                                got: rest.clone().map(|v| v.tok),
+                            },
+                            rest.map(|a| a.span).unwrap_or_else(|| self.lex.end_span()),
+                        ));
+                    }
+                }
+            }
+        }
+        self.lex.expect_next(Tok::Punct(Punct::Pipe))?;
+        let body = self.parse_expr(0)?;
+        let span = body.span;
+        Ok((
+            NodeKind::Closure {
+                args,
+                body: Box::new(body),
+            },
+            span,
+        ))
+    }
+
     pub fn parse_expr(&mut self, min_bind_power: u8) -> Result<Node> {
         let Some(Token {
             tok,
@@ -278,6 +353,15 @@ impl Parser {
                     span: start_span.merge(terminator.span),
                 }
             }
+
+            Tok::Punct(Punct::Pipe) => {
+                let (closure, end_span) = self.parse_closure()?;
+                Node {
+                    kind: closure,
+                    span: start_span.merge(end_span),
+                }
+            }
+
             Tok::Punct(p @ (Punct::Add | Punct::Sub | Punct::Bang)) => {
                 let ((), r_bp) = p
                     .prefix_binding_power()
@@ -307,7 +391,7 @@ impl Parser {
             _ => {
                 return Err(Spanned::new(
                     ParserError::UnexpectedEof {
-                        expected: "atom token".into(),
+                        expected: "atom token at the start of expr".into(),
                     },
                     start_span,
                 ));
@@ -1053,6 +1137,39 @@ mod tests {
         assert!(
             dbg!(parse_expr("5!!")).is_err(),
             "double assertion operator should not parse"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn node_kind_display() {
+        let span = Span::new(0..0);
+        assert_eq!(
+            NodeKind::ArrayLit(vec![Node {
+                span,
+                kind: NodeKind::Atom("test".into()),
+            }])
+            .to_string(),
+            "[\"test\"]"
+        );
+
+        assert_eq!(NodeKind::ArrayLit(vec![]).to_string(), "[]");
+    }
+
+    #[test]
+    fn parse_closure() -> Result<()> {
+        assert_eq!(
+            parse_expr("|a, b| 5")?,
+            Node {
+                span: Span::new(0..8),
+                kind: NodeKind::Closure {
+                    args: vec![Ident("a".into()), Ident("b".into()).into()],
+                    body: Box::new(Node {
+                        span: Span::new(7..8),
+                        kind: NodeKind::Atom(5.into())
+                    })
+                },
+            }
         );
         Ok(())
     }

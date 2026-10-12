@@ -1,16 +1,19 @@
-use std::{collections::HashMap, f64::consts, rc::Rc};
-
 use crate::{
     Punct,
-    eval::fns::{Args, Function},
+    eval::{closure::Closure, env::RuntimeEnv, fns::Args},
     lex::{Atom, Ident},
     parser::{Node, NodeKind},
     span::Spanned,
     value::{Array, Number, Object, Value, ValueType},
 };
 
+pub mod closure;
+pub mod env;
 pub mod fns;
+pub mod stack;
 pub mod std_fns;
+
+pub use env::Env;
 
 type Result<T> = std::result::Result<T, Spanned<RuntimeError>>;
 
@@ -73,7 +76,7 @@ pub enum ArgConversionError {
     #[error("{0}")]
     IntConversionError(std::num::TryFromIntError),
     #[error("{0}")]
-    FloatConversionError(std::num::TryFromIntError),
+    FloatConversionError(std::num::ParseFloatError),
 }
 
 impl From<std::convert::Infallible> for ArgConversionError {
@@ -104,99 +107,78 @@ pub enum FunctionCallError {
     External(String),
 }
 
-#[derive(Debug, Default)]
-pub struct Env {
-    pub fns: HashMap<&'static str, Rc<Function>>,
-    pub runtime_objects: Object,
-}
-
-impl Env {
-    pub fn std() -> Self {
-        Self {
-            fns: std_fns::std_fns(),
-            runtime_objects: Object(HashMap::from_iter([(
-                String::from("constants"),
-                Value::Object(Object(HashMap::from_iter([
-                    (String::from("pi"), Value::Number(Number::Float(consts::PI))),
-                    (
-                        String::from("tau"),
-                        Value::Number(Number::Float(consts::TAU)),
-                    ),
-                ]))),
-            )])),
-        }
-    }
-
-    pub fn attach_object(&mut self, obj: impl Into<Object>) {
-        self.runtime_objects.0.extend(obj.into().0);
-    }
-
-    pub fn merge(&mut self, other: Env) {
-        self.fns.extend(other.fns);
-        self.runtime_objects.0.extend(other.runtime_objects.0);
-    }
-}
-
-pub fn eval(Node { span, kind }: &Node, env: &Env) -> Result<Value> {
+pub fn eval(Node { span, kind }: &Node, scope: &mut RuntimeEnv<'_>) -> Result<Value> {
     match kind {
         NodeKind::Op((punct, (lhs, rhs))) => {
             let spanitize = |e: RuntimeError| Spanned::new(e, *span);
             match punct {
-                crate::lex::Punct::Add => eval(lhs, env)?.add(&eval(rhs, env)?).map_err(spanitize),
-                crate::lex::Punct::Mul => eval(lhs, env)?.mul(&eval(rhs, env)?).map_err(spanitize),
-                crate::lex::Punct::Sub => eval(lhs, env)?.sub(&eval(rhs, env)?).map_err(spanitize),
-                crate::lex::Punct::Div => eval(lhs, env)?.div(&eval(rhs, env)?).map_err(spanitize),
-                crate::lex::Punct::Less => eval(lhs, env)?.lt(&eval(rhs, env)?).map_err(spanitize),
-                crate::lex::Punct::LessOrEq => {
-                    eval(lhs, env)?.lte(&eval(rhs, env)?).map_err(spanitize)
+                crate::lex::Punct::Add => {
+                    eval(lhs, scope)?.add(&eval(rhs, scope)?).map_err(spanitize)
                 }
-                crate::lex::Punct::More => eval(lhs, env)?.mt(&eval(rhs, env)?).map_err(spanitize),
+                crate::lex::Punct::Mul => {
+                    eval(lhs, scope)?.mul(&eval(rhs, scope)?).map_err(spanitize)
+                }
+                crate::lex::Punct::Sub => {
+                    eval(lhs, scope)?.sub(&eval(rhs, scope)?).map_err(spanitize)
+                }
+                crate::lex::Punct::Div => {
+                    eval(lhs, scope)?.div(&eval(rhs, scope)?).map_err(spanitize)
+                }
+                crate::lex::Punct::Less => {
+                    eval(lhs, scope)?.lt(&eval(rhs, scope)?).map_err(spanitize)
+                }
+                crate::lex::Punct::LessOrEq => {
+                    eval(lhs, scope)?.lte(&eval(rhs, scope)?).map_err(spanitize)
+                }
+                crate::lex::Punct::More => {
+                    eval(lhs, scope)?.mt(&eval(rhs, scope)?).map_err(spanitize)
+                }
                 crate::lex::Punct::MoreOrEq => {
-                    eval(lhs, env)?.mte(&eval(rhs, env)?).map_err(spanitize)
+                    eval(lhs, scope)?.mte(&eval(rhs, scope)?).map_err(spanitize)
                 }
                 crate::lex::Punct::CmpEqual => {
-                    eval(lhs, env)?.eq(&eval(rhs, env)?).map_err(spanitize)
+                    eval(lhs, scope)?.eq(&eval(rhs, scope)?).map_err(spanitize)
                 }
                 crate::lex::Punct::CmpNotEqual => {
-                    eval(lhs, env)?.neq(&eval(rhs, env)?).map_err(spanitize)
+                    eval(lhs, scope)?.neq(&eval(rhs, scope)?).map_err(spanitize)
                 }
                 crate::lex::Punct::Or => {
-                    let lhs = eval(lhs, env)?;
+                    let lhs = eval(lhs, scope)?;
                     if lhs.truthy() {
                         Ok(lhs)
                     } else {
-                        eval(rhs, env)
+                        eval(rhs, scope)
                     }
                 }
                 crate::lex::Punct::And => {
-                    let lhs = eval(lhs, env)?;
+                    let lhs = eval(lhs, scope)?;
                     if lhs.truthy() {
-                        eval(rhs, env)
+                        eval(rhs, scope)
                     } else {
                         Ok(lhs)
                     }
                 }
                 crate::lex::Punct::Pipe => {
-                    let lhs = eval(lhs, env)?;
+                    let lhs = eval(lhs, scope)?;
                     // `x | f` and `x | f(a, b)` both mean "call f with x first".
                     let (callee, rest) = match &rhs.kind {
                         NodeKind::Call { callee, args } => (callee, args),
                         _ => (rhs, &Vec::new()),
                     };
                     let name = callee_name(&callee.kind).map(String::from);
-                    let callee = eval(callee, env)?;
+                    let callee = eval(callee, scope)?;
                     let mut values = Vec::with_capacity(rest.len() + 1);
                     values.push(lhs);
                     for arg in rest {
-                        values.push(eval(arg, env)?);
+                        values.push(eval(arg, scope)?);
                     }
-                    call_value(callee, Args(values), name.as_deref())
+                    call_value(scope, callee, Args(values), name.as_deref())
                         .map_err(|e| Spanned::new(e.into(), rhs.span))
                 }
                 crate::lex::Punct::Coalesce => {
-                    let lhs = eval(lhs, env)?;
+                    let lhs = eval(lhs, scope)?;
                     if lhs.nullish() {
-                        eval(rhs, env)
+                        eval(rhs, scope)
                     } else {
                         Ok(lhs)
                     }
@@ -207,9 +189,9 @@ pub fn eval(Node { span, kind }: &Node, env: &Env) -> Result<Value> {
         NodeKind::Atom(atom) => match atom {
             // Attached scope shadows the function registry, so a payload field never gets
             // swallowed by a function of the same name.
-            crate::lex::Atom::Ident(Ident(i)) => match env.runtime_objects.0.get(i) {
+            crate::lex::Atom::Ident(Ident(i)) => match scope.lookup_value(i) {
                 Some(v) => Ok(v.clone()),
-                None => match env.fns.get(i.as_str()) {
+                None => match scope.env.fns.get(i.as_str()) {
                     Some(f) => Ok(Value::Function(f.clone())),
                     None => Ok(Value::Void),
                 },
@@ -223,12 +205,12 @@ pub fn eval(Node { span, kind }: &Node, env: &Env) -> Result<Value> {
         },
         NodeKind::ArrayLit(arr) => Ok(Value::Array(Array(
             arr.iter()
-                .map(|v| eval(v, env))
+                .map(|v| eval(v, scope))
                 .collect::<Result<Vec<_>>>()?,
         ))),
         NodeKind::ObjectLit(map) => Ok(Value::Object(Object(
             map.iter()
-                .map(|(k, v)| Ok((k.to_owned(), eval(v, env)?)))
+                .map(|(k, v)| Ok((k.to_owned(), eval(v, scope)?)))
                 .collect::<Result<_>>()?,
         ))),
         NodeKind::Turnary {
@@ -236,18 +218,18 @@ pub fn eval(Node { span, kind }: &Node, env: &Env) -> Result<Value> {
             truth_node,
             false_node,
         } => {
-            let operand = eval(operand, env)?;
+            let operand = eval(operand, scope)?;
             if operand.truthy() {
-                eval(truth_node, env)
+                eval(truth_node, scope)
             } else {
-                eval(false_node, env)
+                eval(false_node, scope)
             }
         }
         NodeKind::Index { object, index } => {
-            let object = eval(object, env)?;
+            let object = eval(object, scope)?;
             match object {
                 Value::Object(Object(object)) => {
-                    let index_value = eval(index, env)?;
+                    let index_value = eval(index, scope)?;
                     match index_value {
                         Value::String(s) => Ok(object.get(&s).cloned().unwrap_or(Value::Void)),
                         Value::Null | Value::Void => Ok(Value::Void),
@@ -258,7 +240,7 @@ pub fn eval(Node { span, kind }: &Node, env: &Env) -> Result<Value> {
                     }
                 }
                 Value::Array(Array(array)) => {
-                    let index_value = eval(index, env)?;
+                    let index_value = eval(index, scope)?;
                     match index_value {
                         Value::Number(Number::Float(n)) if n >= 0. && n.fract() == 0. => {
                             Ok(array.get(n as usize).cloned().unwrap_or(Value::Void))
@@ -281,7 +263,7 @@ pub fn eval(Node { span, kind }: &Node, env: &Env) -> Result<Value> {
             field: Ident(field),
             ..
         } => {
-            let object_value = eval(object, env)?;
+            let object_value = eval(object, scope)?;
             match object_value {
                 Value::Object(Object(obj)) => Ok(obj.get(field).cloned().unwrap_or(Value::Void)),
                 Value::Null | Value::Void => Ok(Value::Void),
@@ -290,26 +272,32 @@ pub fn eval(Node { span, kind }: &Node, env: &Env) -> Result<Value> {
         }
         NodeKind::Call { callee, args } => {
             let name = callee_name(&callee.kind).map(String::from);
-            let callee = eval(callee, env)?;
+            let callee = eval(callee, scope)?;
             let args = Args(
                 args.iter()
-                    .map(|v| eval(v, env))
+                    .map(|v| eval(v, scope))
                     .collect::<Result<Vec<_>>>()?,
             );
-            call_value(callee, args, name.as_deref()).map_err(|e| Spanned::new(e.into(), *span))
+            call_value(scope, callee, args, name.as_deref())
+                .map_err(|e| Spanned::new(e.into(), *span))
         }
         NodeKind::Negation(statement) => {
-            let value = eval(statement, env)?;
+            let value = eval(statement, scope)?;
             Ok(Value::Bool(!value.truthy()))
         }
 
         NodeKind::NonNullishAssertion(statement) => {
-            let value = eval(statement, env)?;
+            let value = eval(statement, scope)?;
             if value.nullish() {
                 Err(Spanned::new(RuntimeError::NonNullishAssertion, *span))
             } else {
                 Ok(value)
             }
+        }
+
+        NodeKind::Closure { args, body } => {
+            let closure = Closure::new(args.clone(), body.clone());
+            Ok(Value::Closure(closure))
         }
     }
 }
@@ -326,12 +314,16 @@ fn callee_name(node: &NodeKind) -> Option<&str> {
 }
 
 fn call_value(
+    env: &mut RuntimeEnv<'_>,
     callee: Value,
     args: Args,
     name: Option<&str>,
 ) -> std::result::Result<Value, FunctionCallError> {
     match callee {
-        Value::Function(f) => f.call(args),
+        Value::Function(f) => f.call(env, args),
+        Value::Closure(closure) => closure
+            .call(env, args)
+            .map_err(|_| FunctionCallError::External("closure error".into())),
         // An unresolved ident evaluates to void like any other missing lookup, so name it here
         // rather than reporting a bare type mismatch.
         Value::Void => Err(match name {
@@ -355,7 +347,8 @@ mod tests {
 
     fn eval(node: Node) -> crate::Result<Value> {
         let env = Env::std();
-        Ok(super::eval(&node, &env)?)
+        let mut env = RuntimeEnv::new(&env);
+        Ok(super::eval(&node, &mut env)?)
     }
 
     fn eval_str(s: &str) -> crate::Result<Value> {
@@ -365,7 +358,8 @@ mod tests {
             Value::Object(object) => env.attach_object(object),
             _ => panic!("scope return object value"),
         }
-        Ok(super::eval(&node, &env)?)
+        let mut env = RuntimeEnv::new(&env);
+        Ok(super::eval(&node, &mut env)?)
     }
 
     fn err(s: &str) -> crate::ErrorKind {
@@ -687,5 +681,15 @@ mod tests {
         assert_eq!(ev("{}!"), Value::Object(Object::default()));
         assert_eq!(ev("!5!"), Value::Bool(false));
         assert_eq!(ev("!0!"), Value::Bool(true));
+    }
+
+    #[test]
+    fn closure_call() {
+        assert_eq!(ev("(|v| v * 2)(3)"), Value::Number(6.into()));
+    }
+
+    #[test]
+    fn nested_closure_capture() {
+        assert_eq!(ev("(|v| |v2| v2 * v)(3)(2)"), Value::Number(6.into()));
     }
 }

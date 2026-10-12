@@ -3,7 +3,10 @@ use std::{
     rc::Rc,
 };
 
-use crate::{Value, eval::FunctionCallError};
+use crate::{
+    Value,
+    eval::{FunctionCallError, env::RuntimeEnv},
+};
 
 #[derive(Debug)]
 pub struct Args(pub Vec<Value>);
@@ -32,7 +35,11 @@ impl Function {
     }
 
     /// Check arity, then invoke, tagging both failures with the function name.
-    pub fn call(&self, args: Args) -> std::result::Result<Value, FunctionCallError> {
+    pub fn call(
+        &self,
+        env: &mut RuntimeEnv<'_>,
+        args: Args,
+    ) -> std::result::Result<Value, FunctionCallError> {
         let arity = self.f.arity();
         if args.len() != arity {
             return Err(FunctionCallError::InvalidArity {
@@ -41,7 +48,7 @@ impl Function {
                 expected: arity,
             });
         }
-        self.f.call(args)
+        self.f.call(env, args)
     }
 }
 
@@ -70,7 +77,7 @@ impl Debug for Function {
 }
 
 pub trait Callable {
-    fn call(&self, args: Args) -> Result<Value, FunctionCallError>;
+    fn call(&self, ctx: &mut RuntimeEnv<'_>, args: Args) -> Result<Value, FunctionCallError>;
     /// Counting the piped input, which a pipe supplies as the first argument.
     fn arity(&self) -> usize;
 }
@@ -79,14 +86,15 @@ macro_rules! impl_callable_with_args {
     () => {};
     ($(($($types:ident),*)),*) => {
         $(
-            impl<$($types: TryFrom<crate::Value> + 'static),*> Callable for fn($($types,)*) -> std::result::Result<$crate::Value, $crate::eval::FunctionCallError>
+            impl<$($types: TryFrom<crate::Value> + 'static),*> Callable for fn(&mut RuntimeEnv<'_>, $($types,)*) -> std::result::Result<$crate::Value, $crate::eval::FunctionCallError>
             where
                 $($crate::eval::ArgConversionError: From<<$types as TryFrom<crate::Value>>::Error>),*
             {
-                fn call(&self, args: Args) -> std::result::Result<$crate::Value, $crate::eval::FunctionCallError> {
+                fn call(&self, ctx: &mut RuntimeEnv<'_>, args: Args) -> std::result::Result<$crate::Value, $crate::eval::FunctionCallError> {
                     let mut args = args.0.into_iter();
                     let args_len = args.len();
                     (self)(
+                        ctx,
                         $(
                             $types::try_from(args.next().unwrap_or($crate::Value::Void)).map_err(|err|
                                 $crate::eval::FunctionCallError::InvalidArgument {

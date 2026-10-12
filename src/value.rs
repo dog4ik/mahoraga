@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::Display, rc::Rc};
 
 use crate::{
     Function, Punct,
-    eval::{ArgConversionError, OpError, RuntimeError},
+    eval::{ArgConversionError, OpError, RuntimeError, closure::Closure},
 };
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -183,6 +183,7 @@ pub enum Value {
     Object(Object),
     Array(Array),
     Function(Rc<Function>),
+    Closure(Closure),
     Null,
     #[default]
     Void,
@@ -305,6 +306,20 @@ impl TryFrom<Value> for usize {
             _ => Err(ArgConversionError::UnexpectedArgumentType {
                 got: value.value_type(),
                 expected: &[ValueType::Integer],
+            }),
+        }
+    }
+}
+
+impl TryFrom<Value> for Closure {
+    type Error = ArgConversionError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Closure(n) => Ok(n),
+            _ => Err(ArgConversionError::UnexpectedArgumentType {
+                got: value.value_type(),
+                expected: &[ValueType::Function],
             }),
         }
     }
@@ -447,6 +462,9 @@ impl Display for Value {
             Value::Object(obj) => write!(f, "{obj:?}"),
             Value::Array(arr) => write!(f, "{arr:?}"),
             Value::Function(fun) => write!(f, "{fun}"),
+            Value::Closure(closure) => {
+                write!(f, "anynomyous closure/{}", closure.args.len())
+            }
             Value::Null => write!(f, "null"),
             Value::Void => write!(f, "void"),
         }
@@ -518,6 +536,7 @@ impl Value {
             Self::Object(Object(obj)) => !obj.is_empty(),
             Self::Array(Array(arr)) => !arr.is_empty(),
             Self::Function(_) => true,
+            Self::Closure(_) => true,
         }
     }
 
@@ -624,6 +643,7 @@ impl Value {
             Value::Function(_) => ValueType::Function,
             Value::Null => ValueType::Null,
             Value::Void => ValueType::Void,
+            Value::Closure(_) => ValueType::Function,
         }
     }
 
@@ -697,7 +717,7 @@ mod from_serde_json {
                             .collect(),
                     )
                 }
-                Value::Function(_) | Value::Void => return None,
+                Value::Function(_) | Value::Closure(_) | Value::Void => return None,
             })
         }
     }
