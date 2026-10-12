@@ -86,6 +86,14 @@ pub fn std_fns() -> HashMap<&'static str, Rc<Function>> {
             filter(Vec<Value>, Closure),
             "Filter and transform elements in the array"
         ),
+        declare_fn!(
+            find(Vec<Value>, Closure),
+            "Searches for an element of an array that satisfies a predicate"
+        ),
+        declare_fn!(
+            find_map(Vec<Value>, Closure),
+            "Applies function to the elements of array and returns the first truthy result"
+        ),
     ]
     .into_iter()
     .collect()
@@ -343,6 +351,38 @@ pub fn filter(
             })
             .collect::<Result<Vec<_>, _>>()?,
     )))
+}
+
+pub fn find(
+    e: &mut RuntimeEnv<'_>,
+    arr: Vec<Value>,
+    f: Closure,
+) -> Result<Value, FunctionCallError> {
+    Ok(arr
+        .into_iter()
+        .find_map(|v| match f.call(e, crate::Args(vec![v.clone()])) {
+            Ok(o) if o.truthy() => Some(Ok(v)),
+            Ok(_) => None,
+            Err(e) => Some(Err(FunctionCallError::External(e.to_string()))),
+        })
+        .transpose()?
+        .unwrap_or(Value::Void))
+}
+
+pub fn find_map(
+    e: &mut RuntimeEnv<'_>,
+    arr: Vec<Value>,
+    f: Closure,
+) -> Result<Value, FunctionCallError> {
+    Ok(arr
+        .into_iter()
+        .find_map(|v| match f.call(e, crate::Args(vec![v.clone()])) {
+            Ok(o) if o.truthy() => Some(Ok(o)),
+            Ok(_) => None,
+            Err(e) => Some(Err(FunctionCallError::External(e.to_string()))),
+        })
+        .transpose()?
+        .unwrap_or(Value::Void))
 }
 
 #[cfg(test)]
