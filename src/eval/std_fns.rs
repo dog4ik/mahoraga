@@ -46,6 +46,8 @@ pub fn std_fns() -> HashMap<&'static str, Rc<Function>> {
             "Create a new array from indexing into every element object"
         ),
         declare_fn!(log_10(Number), "Calculate log 10 of the number"),
+        declare_fn!(cos(Number), "Calculate cos of the value"),
+        declare_fn!(sin(Number), "Calculate sin of the value"),
         declare_fn!(to_uppercase(String), "Convert string to uppercase"),
         declare_fn!(to_lowercase(String), "Convert string to lowercase"),
         declare_fn!(blank_as_null(Value), "Convert any blank value to null"),
@@ -181,6 +183,28 @@ pub fn log_10(_: &mut RuntimeEnv<'_>, val: Number) -> Result<Value, FunctionCall
             Number::Int(i) => i as f64,
         }
         .log10()
+        .into(),
+    ))
+}
+
+pub fn cos(_: &mut RuntimeEnv<'_>, val: Number) -> Result<Value, FunctionCallError> {
+    Ok(Value::Number(
+        match val {
+            Number::Float(f) => f,
+            Number::Int(i) => i as f64,
+        }
+        .cos()
+        .into(),
+    ))
+}
+
+pub fn sin(_: &mut RuntimeEnv<'_>, val: Number) -> Result<Value, FunctionCallError> {
+    Ok(Value::Number(
+        match val {
+            Number::Float(f) => f,
+            Number::Int(i) => i as f64,
+        }
+        .sin()
         .into(),
     ))
 }
