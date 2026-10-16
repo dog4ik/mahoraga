@@ -1,8 +1,13 @@
-use std::{collections::HashMap, fmt::Display, rc::Rc};
+use std::{
+    collections::HashMap,
+    fmt::{Display, Write},
+    rc::Rc,
+};
 
 use crate::{
     Function, Punct,
     eval::{OpError, RuntimeError, closure::Closure},
+    parser::fmt_comma_separated,
 };
 
 mod from;
@@ -12,6 +17,13 @@ pub struct Object(pub HashMap<String, Value>);
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Array(pub Vec<Value>);
+
+impl Display for Array {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[")?;
+        fmt_comma_separated(f, &self.0, ']')
+    }
+}
 
 impl Array {
     pub fn len(&self) -> usize {
@@ -28,6 +40,20 @@ impl Object {
     }
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+}
+
+impl Display for Object {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_char('{')?;
+
+        for (i, (k, v)) in self.0.iter().enumerate() {
+            if i > 0 {
+                f.write_str(", ")?;
+            }
+            write!(f, "{k}: {v}")?;
+        }
+        f.write_char('}')
     }
 }
 
@@ -64,7 +90,10 @@ impl PartialEq for Number {
 
 impl PartialOrd for Number {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.as_f64().partial_cmp(&other.as_f64())
+        match (self, other) {
+            (Self::Int(l), Self::Int(r)) => l.partial_cmp(r),
+            _ => self.as_f64().partial_cmp(&other.as_f64()),
+        }
     }
 }
 
@@ -91,7 +120,7 @@ impl Number {
     impl_op!(mul, checked_mul, *);
 
     pub fn div(self, rhs: Self) -> std::result::Result<Self, RuntimeError> {
-        if let Number::Int(0) = rhs {
+        if let Number::Int(0) | Number::Float(0.) = rhs {
             return Err(RuntimeError::DivisionByZero);
         }
         Ok(match (self, rhs) {
@@ -110,6 +139,32 @@ impl Display for Number {
                 write!(f, "{n:?}")
             }
             Number::Int(i) => write!(f, "{i}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum CallableValue {
+    Closure(Closure),
+    ExternalFunction(Rc<Function>),
+}
+
+impl crate::Callable for CallableValue {
+    fn call(
+        &self,
+        ctx: &mut crate::RuntimeEnv<'_>,
+        args: crate::Args,
+    ) -> Result<Value, RuntimeError> {
+        match self {
+            CallableValue::Closure(closure) => closure.call(ctx, args).map_err(|e| e.inner),
+            CallableValue::ExternalFunction(function) => function.call(ctx, args),
+        }
+    }
+
+    fn arity(&self) -> usize {
+        match self {
+            CallableValue::Closure(closure) => closure.args.len(),
+            CallableValue::ExternalFunction(function) => function.arity(),
         }
     }
 }
@@ -172,8 +227,8 @@ impl Display for Value {
             Value::String(s) => write!(f, "\"{s}\""),
             Value::Number(n) => write!(f, "{n}"),
             Value::Bool(b) => write!(f, "{b}"),
-            Value::Object(obj) => write!(f, "{obj:?}"),
-            Value::Array(arr) => write!(f, "{arr:?}"),
+            Value::Object(obj) => write!(f, "{obj}"),
+            Value::Array(arr) => write!(f, "{arr}"),
             Value::Function(fun) => write!(f, "{fun}"),
             Value::Closure(closure) => {
                 write!(f, "anynomyous closure/{}", closure.args.len())
@@ -433,5 +488,19 @@ mod from_serde_json {
                 Value::Function(_) | Value::Closure(_) | Value::Void => return None,
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::value::Number;
+
+    #[test]
+    fn int_cmp() {
+        // above 2^53 both values round to the same f64
+        let n = 9007199254740993;
+        assert!(Number::Int(n) > Number::Int(n - 1));
+        assert!(Number::Int(n - 1) < Number::Int(n));
+        assert!(Number::Int(n) >= Number::Int(n));
     }
 }

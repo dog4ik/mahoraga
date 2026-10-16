@@ -1,19 +1,23 @@
-use std::{collections::HashMap, iter::Rev, rc::Rc, slice};
+use std::{iter::Rev, slice};
 
 use crate::Value;
 
 #[derive(Debug)]
 pub struct StackFrame {
-    pub name: Rc<str>,
-    pub scope: HashMap<String, Value>,
+    scope: Vec<(String, Value)>,
 }
 
 impl StackFrame {
-    pub fn new(name: impl Into<Rc<str>>) -> Self {
-        Self {
-            name: name.into(),
-            scope: HashMap::new(),
-        }
+    pub fn new() -> Self {
+        Self { scope: Vec::new() }
+    }
+
+    pub fn get(&self, name: &str) -> Option<&Value> {
+        self.scope.iter().find(|(k, _)| k == name).map(|(_, v)| v)
+    }
+
+    pub fn add(&mut self, name: impl Into<String>, value: Value) {
+        self.scope.push((name.into(), value));
     }
 }
 

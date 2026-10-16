@@ -1,9 +1,9 @@
 use std::{collections::HashMap, rc::Rc};
 
 use crate::{
-    Value,
-    eval::{FunctionCallError, closure::Closure, env::RuntimeEnv, fns::Function},
-    value::{Array, Number, Object, ValueType},
+    Callable, RuntimeError, Value,
+    eval::{FunctionCallError, env::RuntimeEnv, fns::Function},
+    value::{Array, CallableValue, Number, Object, ValueType},
 };
 
 #[macro_export]
@@ -19,7 +19,7 @@ macro_rules! declare_fn {
             ::std::rc::Rc::new($crate::Function {
                 name: ::std::rc::Rc::from($name),
                 help: Some($help),
-                f: Box::new($callable as fn(&mut $crate::RuntimeEnv<'_>, $($arg),*) -> ::std::result::Result<$crate::Value, $crate::FunctionCallError>),
+                f: Box::new($callable as fn(&mut $crate::RuntimeEnv<'_>, $($arg),*) -> ::std::result::Result<$crate::Value, $crate::RuntimeError>),
             }),
         )
     };
@@ -79,21 +79,21 @@ pub fn std_fns() -> HashMap<&'static str, Rc<Function>> {
         declare_fn!(to_i(Value), "Convert number to integer"),
         declare_fn!(to_f(Value), "Convert number to float"),
         declare_fn!(to_s(Value), "Convert any value to string representation"),
-        declare_fn!(map(Vec<Value>, Closure), "Map elements of an array"),
+        declare_fn!(map(Vec<Value>, CallableValue), "Map elements of an array"),
         declare_fn!(
-            filter_map(Vec<Value>, Closure),
+            filter_map(Vec<Value>, CallableValue),
             "Filter and transform elements in the array"
         ),
         declare_fn!(
-            filter(Vec<Value>, Closure),
+            filter(Vec<Value>, CallableValue),
             "Filter and transform elements in the array"
         ),
         declare_fn!(
-            find(Vec<Value>, Closure),
+            find(Vec<Value>, CallableValue),
             "Searches for an element of an array that satisfies a predicate"
         ),
         declare_fn!(
-            find_map(Vec<Value>, Closure),
+            find_map(Vec<Value>, CallableValue),
             "Applies function to the elements of array and returns the first truthy result"
         ),
     ]
@@ -106,14 +106,14 @@ pub fn clamp(
     number: Number,
     min: i64,
     max: i64,
-) -> Result<Value, FunctionCallError> {
+) -> Result<Value, RuntimeError> {
     Ok(Value::Number(match number {
         Number::Float(f) => f.clamp(min as f64, max as f64).into(),
         Number::Int(i) => i.clamp(min, max).into(),
     }))
 }
 
-pub fn sum(_: &mut RuntimeEnv<'_>, elements: Vec<Value>) -> Result<Value, FunctionCallError> {
+pub fn sum(_: &mut RuntimeEnv<'_>, elements: Vec<Value>) -> Result<Value, RuntimeError> {
     Ok(Value::Number(
         elements
             .into_iter()
@@ -125,7 +125,7 @@ pub fn sum(_: &mut RuntimeEnv<'_>, elements: Vec<Value>) -> Result<Value, Functi
     ))
 }
 
-pub fn max(_: &mut RuntimeEnv<'_>, elements: Vec<Value>) -> Result<Value, FunctionCallError> {
+pub fn max(_: &mut RuntimeEnv<'_>, elements: Vec<Value>) -> Result<Value, RuntimeError> {
     match elements
         .into_iter()
         .filter_map(|v| match v {
@@ -139,7 +139,7 @@ pub fn max(_: &mut RuntimeEnv<'_>, elements: Vec<Value>) -> Result<Value, Functi
     }
 }
 
-pub fn min(_: &mut RuntimeEnv<'_>, elements: Vec<Value>) -> Result<Value, FunctionCallError> {
+pub fn min(_: &mut RuntimeEnv<'_>, elements: Vec<Value>) -> Result<Value, RuntimeError> {
     match elements
         .into_iter()
         .filter_map(|v| match v {
@@ -157,7 +157,7 @@ pub fn pluck(
     _: &mut RuntimeEnv<'_>,
     elements: Vec<Value>,
     key: String,
-) -> Result<Value, FunctionCallError> {
+) -> Result<Value, RuntimeError> {
     let arr: Vec<Value> = elements
         .into_iter()
         .filter_map(|v| match v {
@@ -168,15 +168,15 @@ pub fn pluck(
     Ok(Value::Array(Array(arr)))
 }
 
-pub fn to_uppercase(_: &mut RuntimeEnv<'_>, val: String) -> Result<Value, FunctionCallError> {
+pub fn to_uppercase(_: &mut RuntimeEnv<'_>, val: String) -> Result<Value, RuntimeError> {
     Ok(Value::String(val.to_uppercase()))
 }
 
-pub fn concat(_: &mut RuntimeEnv<'_>, val: Vec<Value>) -> Result<Value, FunctionCallError> {
+pub fn concat(_: &mut RuntimeEnv<'_>, val: Vec<Value>) -> Result<Value, RuntimeError> {
     Ok(val.iter().map(Value::stringify).collect::<String>().into())
 }
 
-pub fn log_10(_: &mut RuntimeEnv<'_>, val: Number) -> Result<Value, FunctionCallError> {
+pub fn log_10(_: &mut RuntimeEnv<'_>, val: Number) -> Result<Value, RuntimeError> {
     Ok(Value::Number(
         match val {
             Number::Float(f) => f,
@@ -187,7 +187,7 @@ pub fn log_10(_: &mut RuntimeEnv<'_>, val: Number) -> Result<Value, FunctionCall
     ))
 }
 
-pub fn cos(_: &mut RuntimeEnv<'_>, val: Number) -> Result<Value, FunctionCallError> {
+pub fn cos(_: &mut RuntimeEnv<'_>, val: Number) -> Result<Value, RuntimeError> {
     Ok(Value::Number(
         match val {
             Number::Float(f) => f,
@@ -198,7 +198,7 @@ pub fn cos(_: &mut RuntimeEnv<'_>, val: Number) -> Result<Value, FunctionCallErr
     ))
 }
 
-pub fn sin(_: &mut RuntimeEnv<'_>, val: Number) -> Result<Value, FunctionCallError> {
+pub fn sin(_: &mut RuntimeEnv<'_>, val: Number) -> Result<Value, RuntimeError> {
     Ok(Value::Number(
         match val {
             Number::Float(f) => f,
@@ -213,7 +213,7 @@ pub fn join(
     _: &mut RuntimeEnv<'_>,
     val: Vec<Value>,
     separator: String,
-) -> Result<Value, FunctionCallError> {
+) -> Result<Value, RuntimeError> {
     let mut out = String::new();
     let len = val.len();
     if len == 0 {
@@ -229,11 +229,11 @@ pub fn join(
     Ok(Value::String(out))
 }
 
-pub fn trim(_: &mut RuntimeEnv<'_>, val: String) -> Result<Value, FunctionCallError> {
+pub fn trim(_: &mut RuntimeEnv<'_>, val: String) -> Result<Value, RuntimeError> {
     Ok(Value::String(val.trim().to_owned()))
 }
 
-pub fn len(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, FunctionCallError> {
+pub fn len(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, RuntimeError> {
     Ok(Value::Number(Number::Int(match val {
         Value::String(s) => s.chars().count(),
         Value::Object(object) => object.len(),
@@ -247,15 +247,15 @@ pub fn len(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, FunctionCallErro
     } as i64)))
 }
 
-pub fn trim_start(_: &mut RuntimeEnv<'_>, val: String) -> Result<Value, FunctionCallError> {
+pub fn trim_start(_: &mut RuntimeEnv<'_>, val: String) -> Result<Value, RuntimeError> {
     Ok(Value::String(val.trim_start().to_owned()))
 }
 
-pub fn trim_end(_: &mut RuntimeEnv<'_>, val: String) -> Result<Value, FunctionCallError> {
+pub fn trim_end(_: &mut RuntimeEnv<'_>, val: String) -> Result<Value, RuntimeError> {
     Ok(Value::String(val.trim_end().to_owned()))
 }
 
-pub fn to_i(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, FunctionCallError> {
+pub fn to_i(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, RuntimeError> {
     match val {
         Value::Number(Number::Float(f)) => Ok(Value::Number(Number::Int(f as i64))),
         Value::Number(val @ Number::Int(_)) => Ok(Value::Number(val)),
@@ -277,11 +277,11 @@ pub fn to_i(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, FunctionCallErr
                 got: val.value_type(),
                 expected: &[ValueType::Float, ValueType::Integer, ValueType::String],
             },
-        }),
+        })?,
     }
 }
 
-pub fn to_f(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, FunctionCallError> {
+pub fn to_f(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, RuntimeError> {
     match val {
         Value::Number(val @ Number::Float(_)) => Ok(Value::Number(val)),
         Value::Number(Number::Int(i)) => Ok(Value::Number(Number::Float(i as f64))),
@@ -303,27 +303,27 @@ pub fn to_f(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, FunctionCallErr
                 got: val.value_type(),
                 expected: &[ValueType::Float, ValueType::Integer, ValueType::String],
             },
-        }),
+        })?,
     }
 }
 
-pub fn to_s(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, FunctionCallError> {
+pub fn to_s(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, RuntimeError> {
     Ok(Value::String(val.stringify()))
 }
 
-pub fn to_lowercase(_: &mut RuntimeEnv<'_>, val: String) -> Result<Value, FunctionCallError> {
+pub fn to_lowercase(_: &mut RuntimeEnv<'_>, val: String) -> Result<Value, RuntimeError> {
     Ok(Value::String(val.to_lowercase()))
 }
 
-pub fn blank_as_null(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, FunctionCallError> {
+pub fn blank_as_null(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, RuntimeError> {
     Ok(if val.blank() { Value::Null } else { val })
 }
 
-pub fn blank_as_void(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, FunctionCallError> {
+pub fn blank_as_void(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, RuntimeError> {
     Ok(if val.blank() { Value::Void } else { val })
 }
 
-pub fn void_as_null(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, FunctionCallError> {
+pub fn void_as_null(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, RuntimeError> {
     Ok(match val {
         Value::Void => Value::Null,
         _ => val,
@@ -333,14 +333,11 @@ pub fn void_as_null(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, Functio
 pub fn map(
     e: &mut RuntimeEnv<'_>,
     arr: Vec<Value>,
-    f: Closure,
-) -> Result<Value, FunctionCallError> {
+    f: CallableValue,
+) -> Result<Value, RuntimeError> {
     Ok(Value::Array(Array(
         arr.into_iter()
-            .map(|v| {
-                f.call(e, crate::Args(vec![v]))
-                    .map_err(|e| FunctionCallError::External(e.to_string()))
-            })
+            .map(|v| f.call(e, crate::Args(vec![v])))
             .collect::<Result<Vec<_>, _>>()?,
     )))
 }
@@ -348,14 +345,14 @@ pub fn map(
 pub fn filter_map(
     e: &mut RuntimeEnv<'_>,
     arr: Vec<Value>,
-    f: Closure,
-) -> Result<Value, FunctionCallError> {
+    f: CallableValue,
+) -> Result<Value, RuntimeError> {
     Ok(Value::Array(Array(
         arr.into_iter()
             .filter_map(|v| match f.call(e, crate::Args(vec![v])) {
                 Ok(o) if o.truthy() => Some(Ok(o)),
                 Ok(_) => None,
-                Err(e) => Some(Err(FunctionCallError::External(e.to_string()))),
+                Err(e) => Some(Err(e)),
             })
             .collect::<Result<Vec<_>, _>>()?,
     )))
@@ -364,14 +361,14 @@ pub fn filter_map(
 pub fn filter(
     e: &mut RuntimeEnv<'_>,
     arr: Vec<Value>,
-    f: Closure,
-) -> Result<Value, FunctionCallError> {
+    f: CallableValue,
+) -> Result<Value, RuntimeError> {
     Ok(Value::Array(Array(
         arr.into_iter()
             .filter_map(|v| match f.call(e, crate::Args(vec![v.clone()])) {
                 Ok(o) if o.truthy() => Some(Ok(v)),
                 Ok(_) => None,
-                Err(e) => Some(Err(FunctionCallError::External(e.to_string()))),
+                Err(e) => Some(Err(e)),
             })
             .collect::<Result<Vec<_>, _>>()?,
     )))
@@ -380,14 +377,14 @@ pub fn filter(
 pub fn find(
     e: &mut RuntimeEnv<'_>,
     arr: Vec<Value>,
-    f: Closure,
-) -> Result<Value, FunctionCallError> {
+    f: CallableValue,
+) -> Result<Value, RuntimeError> {
     Ok(arr
         .into_iter()
         .find_map(|v| match f.call(e, crate::Args(vec![v.clone()])) {
             Ok(o) if o.truthy() => Some(Ok(v)),
             Ok(_) => None,
-            Err(e) => Some(Err(FunctionCallError::External(e.to_string()))),
+            Err(e) => Some(Err(e)),
         })
         .transpose()?
         .unwrap_or(Value::Void))
@@ -396,14 +393,14 @@ pub fn find(
 pub fn find_map(
     e: &mut RuntimeEnv<'_>,
     arr: Vec<Value>,
-    f: Closure,
-) -> Result<Value, FunctionCallError> {
+    f: CallableValue,
+) -> Result<Value, RuntimeError> {
     Ok(arr
         .into_iter()
-        .find_map(|v| match f.call(e, crate::Args(vec![v.clone()])) {
+        .find_map(|v| match f.call(e, crate::Args(vec![v])) {
             Ok(o) if o.truthy() => Some(Ok(o)),
             Ok(_) => None,
-            Err(e) => Some(Err(FunctionCallError::External(e.to_string()))),
+            Err(e) => Some(Err(e)),
         })
         .transpose()?
         .unwrap_or(Value::Void))
@@ -412,11 +409,11 @@ pub fn find_map(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Args, Callable, Env, eval::FunctionCallError, eval_str, value::Object};
+    use crate::{Args, Callable, Env, RuntimeError, eval_str, value::Object};
 
     mod scaling {
         use crate::{
-            eval::{FunctionCallError, env::RuntimeEnv},
+            eval::{RuntimeError, env::RuntimeEnv},
             value::Number,
         };
 
@@ -424,7 +421,7 @@ mod tests {
             _: &mut RuntimeEnv<'_>,
             v: f64,
             by: u32,
-        ) -> Result<crate::Value, FunctionCallError> {
+        ) -> Result<crate::Value, RuntimeError> {
             Ok(crate::Value::Number(Number::Float(v * f64::from(by))))
         }
     }
@@ -495,11 +492,7 @@ mod tests {
     fn callable_can_be_implemented_from_outside() {
         struct SkipBlank(Box<dyn Callable>);
         impl Callable for SkipBlank {
-            fn call(
-                &self,
-                env: &mut RuntimeEnv<'_>,
-                args: Args,
-            ) -> Result<Value, FunctionCallError> {
+            fn call(&self, env: &mut RuntimeEnv<'_>, args: Args) -> Result<Value, RuntimeError> {
                 if args.0.first().is_some_and(Value::blank) {
                     return Ok(Value::Void);
                 }
@@ -517,8 +510,7 @@ mod tests {
                 name: Rc::from("upper"),
                 help: None,
                 f: Box::new(SkipBlank(Box::new(
-                    to_uppercase
-                        as fn(&mut RuntimeEnv<'_>, String) -> Result<Value, FunctionCallError>,
+                    to_uppercase as fn(&mut RuntimeEnv<'_>, String) -> Result<Value, RuntimeError>,
                 ))),
             }),
         );

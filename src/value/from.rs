@@ -294,3 +294,18 @@ where
         }
     }
 }
+
+impl TryFrom<Value> for super::CallableValue {
+    type Error = ArgConversionError;
+
+    fn try_from(value: Value) -> Result<Self, Self::Error> {
+        match value {
+            Value::Function(function) => Ok(Self::ExternalFunction(function)),
+            Value::Closure(closure) => Ok(Self::Closure(closure)),
+            _ => Err(ArgConversionError::UnexpectedArgumentType {
+                got: value.value_type(),
+                expected: &[ValueType::Function],
+            }),
+        }
+    }
+}

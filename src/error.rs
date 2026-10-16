@@ -6,7 +6,7 @@ use crate::{
 };
 
 #[derive(Debug, thiserror::Error)]
-pub enum ErrorKind {
+pub enum Error {
     #[error("lexer error: {}", .0.inner)]
     Lexer(Spanned<LexerError>),
     #[error("parser error: {}", .0.inner)]
@@ -15,21 +15,21 @@ pub enum ErrorKind {
     Runtime(Spanned<RuntimeError>),
 }
 
-impl ErrorKind {
+impl Error {
     pub fn help(&self) -> Option<String> {
         match self {
-            ErrorKind::Lexer(spanned) => spanned.inner.help(),
-            ErrorKind::Parser(spanned) => spanned.inner.help(),
-            ErrorKind::Runtime(spanned) => spanned.inner.help(),
+            Error::Lexer(spanned) => spanned.inner.help(),
+            Error::Parser(spanned) => spanned.inner.help(),
+            Error::Runtime(spanned) => spanned.inner.help(),
         }
     }
 }
 
 macro_rules! impl_from_spanned {
     ($($variant:ident($err:ty)),*) => {$(
-        impl From<Spanned<$err>> for ErrorKind {
+        impl From<Spanned<$err>> for Error {
             fn from(value: Spanned<$err>) -> Self {
-                ErrorKind::$variant(value)
+                Error::$variant(value)
             }
         }
     )*};
@@ -41,23 +41,23 @@ impl_from_spanned!(
     Runtime(RuntimeError)
 );
 
-impl ErrorKind {
+impl Error {
     pub fn span(&self) -> Span {
         match self {
-            ErrorKind::Lexer(spanned) => spanned.span,
-            ErrorKind::Parser(spanned) => spanned.span,
-            ErrorKind::Runtime(spanned) => spanned.span,
+            Error::Lexer(spanned) => spanned.span,
+            Error::Parser(spanned) => spanned.span,
+            Error::Runtime(spanned) => spanned.span,
         }
     }
 }
 
 #[cfg(feature = "miette")]
-impl miette::Diagnostic for ErrorKind {
+impl miette::Diagnostic for Error {
     fn code<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
         Some(Box::new(match self {
-            ErrorKind::Lexer(_) => "mahoraga::lexer",
-            ErrorKind::Parser(_) => "mahoraga::parser",
-            ErrorKind::Runtime(_) => "mahoraga::runtime",
+            Error::Lexer(_) => "mahoraga::lexer",
+            Error::Parser(_) => "mahoraga::parser",
+            Error::Runtime(_) => "mahoraga::runtime",
         }))
     }
 

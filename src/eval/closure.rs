@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use crate::{
     Args, Ident, Value,
     eval::{self, env::RuntimeEnv, stack::StackFrame},
@@ -7,7 +9,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct Closure {
     pub args: Vec<String>,
-    body: Box<Node>,
+    body: Rc<Node>,
 }
 
 impl PartialEq for Closure {
@@ -17,7 +19,7 @@ impl PartialEq for Closure {
 }
 
 impl Closure {
-    pub fn new(args: Vec<Ident>, node: Box<Node>) -> Self {
+    pub fn new(args: Vec<Ident>, node: Rc<Node>) -> Self {
         Self {
             args: args.into_iter().map(|Ident(i)| i).collect(),
             body: node,
@@ -25,14 +27,15 @@ impl Closure {
     }
 
     pub fn call(&self, env: &mut RuntimeEnv<'_>, Args(args): Args) -> eval::Result<Value> {
-        let mut frame = StackFrame::new("anonymous_closure");
-        for (i, closure_arg) in self.args.iter().enumerate() {
-            let value = args.get(i).unwrap_or(&Value::Void);
-            frame.scope.insert(closure_arg.clone(), value.clone());
+        let mut frame = StackFrame::new();
+        let mut args = args.into_iter();
+        for closure_arg in &self.args {
+            let value = args.next().unwrap_or(Value::Void);
+            frame.add(closure_arg, value);
         }
         env.stack.push(frame);
-        let res = crate::eval(&self.body, env)?;
+        let res = crate::eval(&self.body, env);
         env.stack.pop();
-        Ok(res)
+        res
     }
 }

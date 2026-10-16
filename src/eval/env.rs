@@ -43,6 +43,7 @@ impl Env {
 /// Mutable variable scope used at runtime
 pub struct RuntimeEnv<'a> {
     pub env: &'a Env,
+    pub current_depth: usize,
     pub stack: Stack,
 }
 
@@ -50,6 +51,7 @@ impl RuntimeEnv<'_> {
     pub fn new(env: &Env) -> RuntimeEnv<'_> {
         RuntimeEnv {
             env,
+            current_depth: 0,
             stack: Stack::new(),
         }
     }
@@ -57,7 +59,7 @@ impl RuntimeEnv<'_> {
     pub fn lookup_value(&self, name: &str) -> Option<&Value> {
         self.stack
             .into_iter()
-            .find_map(|frame| frame.scope.get(name))
+            .find_map(|frame| frame.get(name))
             .or_else(|| self.env.runtime_objects.0.get(name))
     }
 }

@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    Value,
+    RuntimeError, Value,
     eval::{FunctionCallError, env::RuntimeEnv},
 };
 
@@ -35,18 +35,14 @@ impl Function {
     }
 
     /// Check arity, then invoke, tagging both failures with the function name.
-    pub fn call(
-        &self,
-        env: &mut RuntimeEnv<'_>,
-        args: Args,
-    ) -> std::result::Result<Value, FunctionCallError> {
+    pub fn call(&self, env: &mut RuntimeEnv<'_>, args: Args) -> Result<Value, RuntimeError> {
         let arity = self.f.arity();
         if args.len() != arity {
-            return Err(FunctionCallError::InvalidArity {
+            Err(FunctionCallError::InvalidArity {
                 name: self.name.to_string(),
                 got: args.len(),
                 expected: arity,
-            });
+            })?;
         }
         self.f.call(env, args)
     }
@@ -77,7 +73,7 @@ impl Debug for Function {
 }
 
 pub trait Callable {
-    fn call(&self, ctx: &mut RuntimeEnv<'_>, args: Args) -> Result<Value, FunctionCallError>;
+    fn call(&self, ctx: &mut RuntimeEnv<'_>, args: Args) -> Result<Value, RuntimeError>;
     /// Counting the piped input, which a pipe supplies as the first argument.
     fn arity(&self) -> usize;
 }
@@ -86,11 +82,11 @@ macro_rules! impl_callable_with_args {
     () => {};
     ($(($($types:ident),*)),*) => {
         $(
-            impl<$($types: TryFrom<crate::Value> + 'static),*> Callable for fn(&mut RuntimeEnv<'_>, $($types,)*) -> std::result::Result<$crate::Value, $crate::eval::FunctionCallError>
+            impl<$($types: TryFrom<crate::Value> + 'static),*> Callable for fn(&mut RuntimeEnv<'_>, $($types,)*) -> std::result::Result<$crate::Value, $crate::eval::RuntimeError>
             where
                 $($crate::eval::ArgConversionError: From<<$types as TryFrom<crate::Value>>::Error>),*
             {
-                fn call(&self, ctx: &mut RuntimeEnv<'_>, args: Args) -> std::result::Result<$crate::Value, $crate::eval::FunctionCallError> {
+                fn call(&self, ctx: &mut RuntimeEnv<'_>, args: Args) -> std::result::Result<$crate::Value, $crate::eval::RuntimeError> {
                     let mut args = args.0.into_iter();
                     let args_len = args.len();
                     (self)(

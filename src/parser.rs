@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     fmt::{Display, Write},
+    rc::Rc,
 };
 
 use crate::{
@@ -64,7 +65,7 @@ impl Node {
     }
 }
 
-fn fmt_comma_separated<T: Display>(
+pub(crate) fn fmt_comma_separated<T: Display>(
     f: &mut std::fmt::Formatter<'_>,
     items: &[T],
     end: char,
@@ -157,7 +158,7 @@ pub enum NodeKind {
     },
     Closure {
         args: Vec<Ident>,
-        body: Box<Node>,
+        body: Rc<Node>,
     },
     NonNullishAssertion(Box<Node>),
     Negation(Box<Node>),
@@ -302,7 +303,7 @@ impl Parser {
         Ok((
             NodeKind::Closure {
                 args,
-                body: Box::new(body),
+                body: Rc::new(body),
             },
             span,
         ))
@@ -1164,7 +1165,7 @@ mod tests {
                 span: Span::new(0..8),
                 kind: NodeKind::Closure {
                     args: vec![Ident("a".into()), Ident("b".into()).into()],
-                    body: Box::new(Node {
+                    body: Rc::new(Node {
                         span: Span::new(7..8),
                         kind: NodeKind::Atom(5.into())
                     })
