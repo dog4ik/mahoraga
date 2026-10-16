@@ -13,6 +13,8 @@ use crate::{
 
 pub type Result<T> = std::result::Result<T, Spanned<ParserError>>;
 
+pub const MAX_PARSER_DEPTH: usize = 100;
+
 #[derive(Debug, thiserror::Error)]
 pub enum ParserError {
     #[error("invalid member access")]
@@ -29,6 +31,8 @@ pub enum ParserError {
     InvalidClosureArgument { got: Option<Tok> },
     #[error("expected end of input, got {got}")]
     ExpectedEof { got: String },
+    #[error("expression depth limit reached")]
+    DepthLimitReached,
 }
 
 impl ParserError {
@@ -46,6 +50,7 @@ impl ParserError {
             ParserError::InvalidClosureArgument { .. } => {
                 Some("only identifiers are allowed to be closure arguments".to_string())
             }
+            ParserError::DepthLimitReached => None,
         }
     }
 }
@@ -170,9 +175,17 @@ pub enum NodeKind {
 #[derive(Debug)]
 struct Parser {
     lex: Lexer,
+    current_depth: usize,
 }
 
 impl Parser {
+    pub fn new(lex: Lexer) -> Self {
+        Self {
+            lex,
+            current_depth: 0,
+        }
+    }
+
     /// Parse comma separated list.
     ///
     /// Returns parsed nodes and terminator token
@@ -310,6 +323,21 @@ impl Parser {
     }
 
     pub fn parse_expr(&mut self, min_bind_power: u8) -> Result<Node> {
+        self.current_depth += 1;
+        if self.current_depth >= MAX_PARSER_DEPTH {
+            let pos = self.lex.pos();
+            return Err(Spanned {
+                inner: ParserError::DepthLimitReached,
+                span: Span::new(pos..pos),
+            });
+        }
+
+        let res = self.parse_expr_inner(min_bind_power);
+        self.current_depth -= 1;
+        res
+    }
+
+    fn parse_expr_inner(&mut self, min_bind_power: u8) -> Result<Node> {
         let Some(Token {
             tok,
             span: start_span,
@@ -527,7 +555,7 @@ impl Parser {
 
 pub fn parse_expr(input: &str) -> crate::Result<Node> {
     let lex = Lexer::new(input)?;
-    let mut parser = Parser { lex };
+    let mut parser = Parser::new(lex);
     let node = parser.parse_expr(0)?;
     parser.lex.expect_eof()?;
     Ok(node)
@@ -535,6 +563,8 @@ pub fn parse_expr(input: &str) -> crate::Result<Node> {
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
     use super::*;
 
     type Result<T> = crate::Result<T>;
@@ -1173,5 +1203,26 @@ mod tests {
             }
         );
         Ok(())
+    }
+
+    #[test]
+    fn parser_stack_overflow() {
+        let mut s = String::new();
+        let depth = 500;
+        for _ in 0..depth {
+            s.push_str("(1 + ");
+        }
+        s.push_str("1");
+        for _ in 0..depth {
+            s.push_str(")")
+        }
+        let err = parse_expr(dbg!(&s)).unwrap_err();
+        assert_matches!(
+            err,
+            crate::error::Error::Parser(Spanned {
+                inner: ParserError::DepthLimitReached,
+                ..
+            })
+        );
     }
 }
