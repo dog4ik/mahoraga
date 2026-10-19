@@ -6,6 +6,7 @@ mod lex;
 mod parser;
 mod span;
 pub mod value;
+mod vm;
 
 pub use error::Error;
 pub use eval::{ArgConversionError, FunctionCallError, OpError, RuntimeError};

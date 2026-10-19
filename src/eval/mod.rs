@@ -184,6 +184,7 @@ impl<'a> RuntimeEnv<'a> {
             // Attached scope shadows the function registry, so a payload field never gets
             // swallowed by a function of the same name.
             crate::lex::Atom::Ident(Ident(i)) => match self.lookup_value(i) {
+                // NOTE: This clone is baaad
                 Some(v) => Ok(v.clone()),
                 None => match self.env.fns.get(i.as_str()) {
                     Some(f) => Ok(Value::Function(f.clone())),
