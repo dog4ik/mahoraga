@@ -8,6 +8,7 @@ use crate::{
     Function, Punct,
     eval::{OpError, RuntimeError, closure::Closure},
     parser::fmt_comma_separated,
+    vm::closure::VmClosure,
 };
 
 mod from;
@@ -178,6 +179,7 @@ pub enum Value {
     Object(Object),
     Array(Array),
     Function(Rc<Function>),
+    VmClosure(Rc<VmClosure>),
     Closure(Closure),
     Null,
     #[default]
@@ -232,6 +234,9 @@ impl Display for Value {
             Value::Function(fun) => write!(f, "{fun}"),
             Value::Closure(closure) => {
                 write!(f, "anynomyous closure/{}", closure.args.len())
+            }
+            Value::VmClosure(closure) => {
+                write!(f, "anynomyous vm closure/{}", closure.arity)
             }
             Value::Null => write!(f, "null"),
             Value::Void => write!(f, "void"),
@@ -305,10 +310,11 @@ impl Value {
             Self::Array(Array(arr)) => !arr.is_empty(),
             Self::Function(_) => true,
             Self::Closure(_) => true,
+            Self::VmClosure(_) => true,
         }
     }
 
-    pub fn mt(&self, other: &Value) -> Result<Value, RuntimeError> {
+    pub fn gt(&self, other: &Value) -> Result<Value, RuntimeError> {
         Ok(Value::Bool(match (self, other) {
             (Value::String(s), Value::String(o)) => s > o,
             (Value::Number(s), Value::Number(o)) => s > o,
@@ -323,7 +329,7 @@ impl Value {
         }))
     }
 
-    pub fn mte(&self, other: &Value) -> Result<Value, RuntimeError> {
+    pub fn gte(&self, other: &Value) -> Result<Value, RuntimeError> {
         Ok(Value::Bool(match (self, other) {
             (Value::String(s), Value::String(o)) => s >= o,
             (Value::Number(s), Value::Number(o)) => s >= o,
@@ -412,6 +418,7 @@ impl Value {
             Value::Null => ValueType::Null,
             Value::Void => ValueType::Void,
             Value::Closure(_) => ValueType::Function,
+            Value::VmClosure(_) => ValueType::Function,
         }
     }
 
@@ -485,7 +492,9 @@ mod from_serde_json {
                             .collect(),
                     )
                 }
-                Value::Function(_) | Value::Closure(_) | Value::Void => return None,
+                Value::Function(_) | Value::Closure(_) | Value::Void | Value::VmClosure(_) => {
+                    return None;
+                }
             })
         }
     }

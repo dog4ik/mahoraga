@@ -96,6 +96,10 @@ pub fn std_fns() -> HashMap<&'static str, Rc<Function>> {
             find_map(Vec<Value>, CallableValue),
             "Applies function to the elements of array and returns the first truthy result"
         ),
+        declare_fn!(
+            replace_all(String, String, String),
+            "Replaces all occurrences of the second argument with the third argument"
+        ),
     ]
     .into_iter()
     .collect()
@@ -242,6 +246,7 @@ pub fn len(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, RuntimeError> {
         | Value::Bool(_)
         | Value::Function(_)
         | Value::Closure(_)
+        | Value::VmClosure(_)
         | Value::Null
         | Value::Void => 0,
     } as i64)))
@@ -404,6 +409,15 @@ pub fn find_map(
         })
         .transpose()?
         .unwrap_or(Value::Void))
+}
+
+pub fn replace_all(
+    _: &mut RuntimeEnv<'_>,
+    input: String,
+    needle: String,
+    replacement: String,
+) -> Result<Value, RuntimeError> {
+    Ok(input.replace(&needle, &replacement).into())
 }
 
 #[cfg(test)]
