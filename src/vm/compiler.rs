@@ -45,9 +45,7 @@ impl Compiler {
                     Punct::Coalesce => {
                         let (lhs, rhs) = op;
                         self.compile(*lhs);
-                        let jump = self
-                            .code
-                            .emit(OpCode::JumpIfNullish { offset: u16::MAX });
+                        let jump = self.code.emit(OpCode::JumpIfNullish { offset: u16::MAX });
                         self.compile(*rhs);
                         self.code.patch_jump(jump);
                     }
