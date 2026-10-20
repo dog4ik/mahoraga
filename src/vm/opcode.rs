@@ -35,6 +35,16 @@ pub enum OpCode {
     AssertNotNullish,
     /// Pop a single value from the stack
     Pop,
+    MakeArray {
+        size: u16,
+    },
+    MakeObject {
+        size: u16,
+    },
+    Index,
+    StaticAccess {
+        key_constant_idx: u16,
+    },
 }
 
 #[derive(Debug)]

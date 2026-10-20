@@ -18,10 +18,10 @@ impl ConstantsPool {
         ])
     }
 
-    pub fn add_value(&mut self, value: Value) -> usize {
+    pub fn add_value(&mut self, value: Value) -> u16 {
         let idx = self.0.len();
         self.0.push(value);
-        idx
+        idx as u16
     }
 
     pub fn expect_value(&mut self, index: u16) -> &Value {

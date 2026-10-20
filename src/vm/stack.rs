@@ -1,7 +1,7 @@
 use crate::Value;
 
 #[derive(Debug)]
-pub struct Stack(Vec<Value>);
+pub struct Stack(pub Vec<Value>);
 
 impl Stack {
     pub fn new() -> Self {

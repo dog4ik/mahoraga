@@ -1,5 +1,8 @@
+use std::collections::HashMap;
+
 use crate::{
-    RuntimeError, Value,
+    Env, RuntimeError, Value,
+    value::{Array, Number, Object},
     vm::{
         constants::ConstantsPool,
         opcode::{Instructions, OpCode},
@@ -16,14 +19,16 @@ pub struct VirtualMachine {
     ip: usize,
     code: Instructions,
     constants: ConstantsPool,
+    env: Env,
     stack: Stack,
 }
 
 impl VirtualMachine {
-    pub fn new(code: Instructions, constants: ConstantsPool) -> Self {
+    pub fn new(code: Instructions, constants: ConstantsPool, env: Env) -> Self {
         Self {
             ip: 0,
             code,
+            env,
             constants,
             stack: Stack::new(),
         }
@@ -138,6 +143,68 @@ impl VirtualMachine {
                     self.stack.pop();
                     self.ip += 1;
                 }
+                OpCode::Index => {
+                    let index = self.stack.pop();
+                    let object = self.stack.pop();
+                    let value = match &object {
+                        Value::Object(Object(obj)) => match index {
+                            Value::String(s) => obj.get(&s).cloned().unwrap_or_default(),
+                            Value::Null | Value::Void => Value::Void,
+                            _ => unreachable!("object index can be only string or nullish value"),
+                        },
+                        Value::Array(Array(arr)) => match index {
+                            Value::Number(Number::Int(i)) => {
+                                arr.get(i as usize).cloned().unwrap_or_default()
+                            }
+                            Value::Number(Number::Float(f)) => {
+                                arr.get(f as usize).cloned().unwrap_or_default()
+                            }
+                            Value::Null | Value::Void => Value::Void,
+                            _ => unreachable!("array index can be only number or nullish value"),
+                        },
+                        Value::Null | Value::Void => Value::Void,
+                        _ => unreachable!(
+                            "only array or hashmap can be indexed, got: {}",
+                            object.value_type()
+                        ),
+                    };
+                    self.stack.push(value);
+                    self.ip += 1;
+                }
+                OpCode::MakeArray { size } => {
+                    let size = *size as usize;
+                    let array = Vec::from_iter(self.stack.0.drain(self.stack.len() - size..));
+                    self.stack.push(array.into());
+                    self.ip += 1;
+                }
+                OpCode::MakeObject { size } => {
+                    let size = *size as usize;
+                    let mut object = HashMap::with_capacity(size);
+                    for _ in 0..size {
+                        let value = self.stack.pop();
+                        let key = match self.stack.pop() {
+                            Value::String(s) => s,
+                            rest => {
+                                unreachable!(
+                                    "unexpected object key value type to be string, got: {}",
+                                    rest.value_type()
+                                )
+                            }
+                        };
+                        object.insert(key, value);
+                    }
+                    self.stack.push(Value::Object(Object(object)));
+                    self.ip += 1;
+                }
+                OpCode::StaticAccess { key_constant_idx } => {
+                    let key = match self.constants.expect_value(*key_constant_idx) {
+                        Value::String(key) => key,
+                        _ => panic!("static accessor should be string"),
+                    };
+                    let v = self.env.runtime_objects.0.get(key).cloned().unwrap();
+                    self.stack.push(v);
+                    self.ip += 1;
+                }
             }
         }
         Ok(self.stack.pop())
@@ -153,7 +220,7 @@ mod tests {
     fn ev(s: &str) -> Value {
         let mut compiler = Compiler::new();
         compiler.compile(crate::parser::parse_expr(s).unwrap());
-        let mut vm = compiler.into_vm();
+        let mut vm = compiler.into_vm(crate::Env::std());
         let value = vm.eval().unwrap();
         debug_assert!(
             vm.stack.is_empty(),
@@ -180,5 +247,33 @@ mod tests {
         assert_eq!(ev("\"a\" + \"b\""), "ab".into());
         assert_eq!(ev("true ? (false ? 1 : 2) : 3"), 2.into());
         assert_eq!(ev("null ?? 1"), 1.into());
+    }
+
+    #[test]
+    fn object_access() {
+        assert_eq!(ev("constants.pi"), std::f64::consts::PI.into());
+    }
+
+    #[test]
+    fn array_lit() {
+        assert_eq!(
+            ev("[10, \"foo\", [[\"test\"]]]"),
+            Value::Array(Array(vec![
+                10.into(),
+                "foo".into(),
+                Value::Array(Array(vec![Value::Array(Array(vec!["test".into()]))]))
+            ]))
+        );
+    }
+
+    #[test]
+    fn object_lit() {
+        assert_eq!(
+            ev("{'foo': 'bar', 'baz': 39}"),
+            Value::Object(Object(HashMap::from_iter([
+                ("foo".to_string(), "bar".into()),
+                ("baz".to_string(), 39.into())
+            ])))
+        );
     }
 }

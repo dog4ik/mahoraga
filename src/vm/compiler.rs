@@ -1,5 +1,5 @@
 use crate::{
-    Atom, Node, NodeKind, Punct, Value,
+    Atom, Env, Node, NodeKind, Punct, Value,
     vm::{
         VirtualMachine,
         constants::ConstantsPool,
@@ -49,21 +49,25 @@ impl Compiler {
                         self.compile(*rhs);
                         self.code.patch_jump(jump);
                     }
-                    Punct::Pipe => todo!(),
                     Punct::Or => {
                         let (lhs, rhs) = op;
                         self.compile(*lhs);
-                        let jump = self.code.emit(OpCode::JumpIfTruthy { offset: u16::MAX });
+                        let jump = self
+                            .code
+                            .emit(OpCode::JumpIfTruthyNoPop { offset: u16::MAX });
                         self.compile(*rhs);
                         self.code.patch_jump(jump);
                     }
                     Punct::And => {
                         let (lhs, rhs) = op;
                         self.compile(*lhs);
-                        let jump = self.code.emit(OpCode::JumpIfFalsy { offset: u16::MAX });
+                        let jump = self
+                            .code
+                            .emit(OpCode::JumpIfFalsyNoPop { offset: u16::MAX });
                         self.compile(*rhs);
                         self.code.patch_jump(jump);
                     }
+                    Punct::Pipe => todo!(),
                     _ => unreachable!("{punct} is not a valid op"),
                 };
             }
@@ -80,12 +84,18 @@ impl Compiler {
                 self.compile(*false_node);
                 self.code.patch_jump(jump_over_false);
             }
-            NodeKind::Member {
-                object,
-                field,
-                field_span,
-            } => todo!(),
-            NodeKind::Index { object, index } => todo!(),
+            NodeKind::Member { object, field, .. } => {
+                self.compile(*object);
+                self.code.emit(OpCode::LoadConstant {
+                    constant_idx: self.constants.add_value(field.0.into()),
+                });
+                self.code.emit(OpCode::Index);
+            }
+            NodeKind::Index { object, index } => {
+                self.compile(*object);
+                self.compile(*index);
+                self.code.emit(OpCode::Index);
+            }
             NodeKind::Call { callee, args } => todo!(),
             NodeKind::Closure { args, body } => todo!(),
             NodeKind::NonNullishAssertion(node) => {
@@ -96,10 +106,29 @@ impl Compiler {
                 self.compile(*node);
                 self.code.emit(OpCode::Not);
             }
-            NodeKind::ArrayLit(nodes) => todo!(),
-            NodeKind::ObjectLit(hash_map) => todo!(),
+            NodeKind::ArrayLit(nodes) => {
+                let size = nodes.len();
+                for node in nodes {
+                    self.compile(node);
+                }
+                self.code.emit(OpCode::MakeArray { size: size as u16 });
+            }
+            NodeKind::ObjectLit(hash_map) => {
+                let size = hash_map.len();
+                for (key, value) in hash_map {
+                    self.code.emit(OpCode::LoadConstant {
+                        constant_idx: self.constants.add_value(key.into()) as u16,
+                    });
+                    self.compile(value);
+                }
+                self.code.emit(OpCode::MakeObject { size: size as u16 });
+            }
             NodeKind::Atom(atom) => match atom {
-                Atom::Ident(ident) => todo!(),
+                Atom::Ident(ident) => {
+                    self.code.emit(OpCode::StaticAccess {
+                        key_constant_idx: self.constants.add_value(ident.0.into()),
+                    });
+                }
                 Atom::StrLit(s) => {
                     self.code.emit(OpCode::LoadConstant {
                         constant_idx: self.constants.add_value(Value::String(s)) as u16,
@@ -137,13 +166,7 @@ impl Compiler {
         }
     }
 
-    pub fn into_vm(self) -> VirtualMachine {
-        VirtualMachine::new(self.code, self.constants)
-    }
-}
-
-impl From<Compiler> for VirtualMachine {
-    fn from(value: Compiler) -> Self {
-        value.into_vm()
+    pub fn into_vm(self, env: Env) -> VirtualMachine {
+        VirtualMachine::new(self.code, self.constants, env)
     }
 }
