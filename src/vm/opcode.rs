@@ -23,7 +23,7 @@ pub enum OpCode {
     JumpIfTruthy {
         offset: u16,
     },
-    JumpIfNullish {
+    JumpIfNullishNoPop {
         offset: u16,
     },
     JumpIfFalsyNoPop {
@@ -44,6 +44,9 @@ pub enum OpCode {
     Index,
     StaticAccess {
         key_constant_idx: u16,
+    },
+    FnCall {
+        args_count: u16,
     },
 }
 
@@ -69,7 +72,7 @@ impl Instructions {
             | OpCode::JumpIfTruthy { offset }
             | OpCode::JumpIfFalsyNoPop { offset }
             | OpCode::JumpIfTruthyNoPop { offset } => *offset = target as u16,
-            OpCode::JumpIfNullish { offset } => *offset = target as u16,
+            OpCode::JumpIfNullishNoPop { offset } => *offset = target as u16,
             rest => unreachable!("only jump opcodes can be patched, got {rest:?}"),
         }
     }

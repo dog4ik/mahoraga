@@ -45,7 +45,10 @@ impl Compiler {
                     Punct::Coalesce => {
                         let (lhs, rhs) = op;
                         self.compile(*lhs);
-                        let jump = self.code.emit(OpCode::JumpIfNullish { offset: u16::MAX });
+                        let jump = self
+                            .code
+                            .emit(OpCode::JumpIfNullishNoPop { offset: u16::MAX });
+                        self.code.emit(OpCode::Pop);
                         self.compile(*rhs);
                         self.code.patch_jump(jump);
                     }
@@ -55,6 +58,7 @@ impl Compiler {
                         let jump = self
                             .code
                             .emit(OpCode::JumpIfTruthyNoPop { offset: u16::MAX });
+                        self.code.emit(OpCode::Pop);
                         self.compile(*rhs);
                         self.code.patch_jump(jump);
                     }
@@ -64,6 +68,7 @@ impl Compiler {
                         let jump = self
                             .code
                             .emit(OpCode::JumpIfFalsyNoPop { offset: u16::MAX });
+                        self.code.emit(OpCode::Pop);
                         self.compile(*rhs);
                         self.code.patch_jump(jump);
                     }
@@ -96,7 +101,16 @@ impl Compiler {
                 self.compile(*index);
                 self.code.emit(OpCode::Index);
             }
-            NodeKind::Call { callee, args } => todo!(),
+            NodeKind::Call { callee, args } => {
+                self.compile(*callee);
+                let count = args.len();
+                for arg in args {
+                    self.compile(arg);
+                }
+                self.code.emit(OpCode::FnCall {
+                    args_count: count as u16,
+                });
+            }
             NodeKind::Closure { args, body } => todo!(),
             NodeKind::NonNullishAssertion(node) => {
                 self.compile(*node);
@@ -166,7 +180,7 @@ impl Compiler {
         }
     }
 
-    pub fn into_vm(self, env: Env) -> VirtualMachine {
+    pub fn into_vm(self, env: &Env) -> VirtualMachine<'_> {
         VirtualMachine::new(self.code, self.constants, env)
     }
 }

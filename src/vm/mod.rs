@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    Env, RuntimeError, Value,
+    Env, Node, RuntimeError, Value,
     value::{Array, Number, Object},
     vm::{
         constants::ConstantsPool,
@@ -15,16 +15,16 @@ mod constants;
 mod opcode;
 mod stack;
 
-pub struct VirtualMachine {
+pub struct VirtualMachine<'a> {
     ip: usize,
     code: Instructions,
     constants: ConstantsPool,
-    env: Env,
+    env: &'a Env,
     stack: Stack,
 }
 
-impl VirtualMachine {
-    pub fn new(code: Instructions, constants: ConstantsPool, env: Env) -> Self {
+impl<'a> VirtualMachine<'a> {
+    pub fn new(code: Instructions, constants: ConstantsPool, env: &'a Env) -> Self {
         Self {
             ip: 0,
             code,
@@ -73,10 +73,10 @@ impl VirtualMachine {
                     self.eval_op(|lhs, rhs| lhs.lte(&rhs))?;
                 }
                 OpCode::Gt => {
-                    self.eval_op(|lhs, rhs| lhs.mt(&rhs))?;
+                    self.eval_op(|lhs, rhs| lhs.gt(&rhs))?;
                 }
                 OpCode::Gte => {
-                    self.eval_op(|lhs, rhs| lhs.mte(&rhs))?;
+                    self.eval_op(|lhs, rhs| lhs.gte(&rhs))?;
                 }
                 OpCode::Eq => {
                     self.eval_op(|lhs, rhs| lhs.eq(&rhs))?;
@@ -128,8 +128,8 @@ impl VirtualMachine {
                         self.ip += 1;
                     };
                 }
-                OpCode::JumpIfNullish { offset } => {
-                    let value = self.stack.pop();
+                OpCode::JumpIfNullishNoPop { offset } => {
+                    let value = self.stack.peek();
                     if !value.nullish() {
                         self.ip = *offset as usize
                     } else {
@@ -201,14 +201,44 @@ impl VirtualMachine {
                         Value::String(key) => key,
                         _ => panic!("static accessor should be string"),
                     };
-                    let v = self.env.runtime_objects.0.get(key).cloned().unwrap();
+                    let v = self
+                        .env
+                        .runtime_objects
+                        .0
+                        .get(key)
+                        .cloned()
+                        .or_else(|| Some(Value::Function(self.env.fns.get(key.as_str())?.clone())))
+                        .unwrap();
                     self.stack.push(v);
+                    self.ip += 1;
+                }
+                OpCode::FnCall { args_count } => {
+                    let mut args = Vec::with_capacity((*args_count) as usize);
+                    for _ in 0..*args_count {
+                        args.push(self.stack.pop());
+                    }
+                    let Value::Function(calee) = self.stack.pop() else {
+                        todo!("handle error")
+                    };
+                    self.stack.push(
+                        calee.call(&mut crate::RuntimeEnv::new(&self.env), crate::Args(args))?,
+                    );
                     self.ip += 1;
                 }
             }
         }
         Ok(self.stack.pop())
     }
+}
+
+pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
+    let mut complier = compiler::Compiler::new();
+    complier.compile(node);
+    let mut vm = complier.into_vm(env);
+    Ok(vm.eval().map_err(|e| crate::Spanned {
+        inner: e,
+        span: crate::Span::new(0..0),
+    })?)
 }
 
 #[cfg(test)]
@@ -220,7 +250,8 @@ mod tests {
     fn ev(s: &str) -> Value {
         let mut compiler = Compiler::new();
         compiler.compile(crate::parser::parse_expr(s).unwrap());
-        let mut vm = compiler.into_vm(crate::Env::std());
+        let env = crate::Env::std();
+        let mut vm = compiler.into_vm(&env);
         let value = vm.eval().unwrap();
         debug_assert!(
             vm.stack.is_empty(),
@@ -246,7 +277,15 @@ mod tests {
         assert_eq!(ev("5 - 3"), 2.into());
         assert_eq!(ev("\"a\" + \"b\""), "ab".into());
         assert_eq!(ev("true ? (false ? 1 : 2) : 3"), 2.into());
+
         assert_eq!(ev("null ?? 1"), 1.into());
+        assert_eq!(ev("5 ?? 1"), 5.into());
+
+        assert_eq!(ev("false || 1"), 1.into());
+        assert_eq!(ev("true || 1"), true.into());
+
+        assert_eq!(ev("1 && 0"), 0.into());
+        assert_eq!(ev("false && 1"), false.into());
     }
 
     #[test]
@@ -275,5 +314,10 @@ mod tests {
                 ("baz".to_string(), 39.into())
             ])))
         );
+    }
+
+    #[test]
+    fn external_fn_call() {
+        assert_eq!(ev("to_uppercase('bar')"), "BAR".into());
     }
 }

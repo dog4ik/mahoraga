@@ -308,7 +308,7 @@ impl Value {
         }
     }
 
-    pub fn mt(&self, other: &Value) -> Result<Value, RuntimeError> {
+    pub fn gt(&self, other: &Value) -> Result<Value, RuntimeError> {
         Ok(Value::Bool(match (self, other) {
             (Value::String(s), Value::String(o)) => s > o,
             (Value::Number(s), Value::Number(o)) => s > o,
@@ -323,7 +323,7 @@ impl Value {
         }))
     }
 
-    pub fn mte(&self, other: &Value) -> Result<Value, RuntimeError> {
+    pub fn gte(&self, other: &Value) -> Result<Value, RuntimeError> {
         Ok(Value::Bool(match (self, other) {
             (Value::String(s), Value::String(o)) => s >= o,
             (Value::Number(s), Value::Number(o)) => s >= o,
