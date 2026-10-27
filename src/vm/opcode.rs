@@ -1,3 +1,5 @@
+use crate::Span;
+
 #[derive(Debug)]
 pub enum OpCode {
     LoadConstant {
@@ -51,22 +53,33 @@ pub enum OpCode {
 }
 
 #[derive(Debug)]
-pub struct Instructions(Vec<OpCode>);
+pub struct Instructions {
+    code: Vec<OpCode>,
+    spans: Vec<Span>,
+}
 
 impl Instructions {
     pub fn new() -> Self {
-        Self(Vec::new())
+        Self {
+            code: Vec::new(),
+            spans: Vec::new(),
+        }
     }
 
-    pub fn emit(&mut self, op: OpCode) -> usize {
-        self.0.push(op);
-        self.0.len() - 1
+    pub fn span_for(&self, instruction_idx: usize) -> Span {
+        self.spans[instruction_idx]
+    }
+
+    pub fn emit(&mut self, op: OpCode, span: impl Into<Span>) -> usize {
+        self.code.push(op);
+        self.spans.push(span.into());
+        self.code.len() - 1
     }
 
     /// Make jump opcode point to the next instruction
     pub fn patch_jump(&mut self, at: usize) {
-        let target = self.0.len() as u32;
-        match &mut self.0[at] {
+        let target = self.code.len() as u32;
+        match &mut self.code[at] {
             OpCode::Jump { offset }
             | OpCode::JumpIfFalsy { offset }
             | OpCode::JumpIfTruthy { offset }
@@ -78,14 +91,14 @@ impl Instructions {
     }
 
     pub fn get(&mut self, n: usize) -> &OpCode {
-        &self.0[n]
+        &self.code[n]
     }
 
     pub fn len(&self) -> usize {
-        self.0.len()
+        self.code.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.code.is_empty()
     }
 }

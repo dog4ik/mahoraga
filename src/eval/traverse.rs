@@ -49,7 +49,7 @@ impl<'a> RuntimeEnv<'a> {
                     NodeKind::Call { callee, args } => (&**callee, args),
                     _ => (rhs, &Vec::new()),
                 };
-                let name = callee_name(&callee.kind).map(String::from);
+                let name = &callee.kind.callee_name().map(String::from);
                 let callee = self.eval(callee)?;
                 let mut values = Vec::with_capacity(rest.len() + 1);
                 values.push(lhs);
@@ -175,7 +175,7 @@ impl<'a> RuntimeEnv<'a> {
                 }
             }
             NodeKind::Call { callee, args } => {
-                let name = callee_name(&callee.kind).map(String::from);
+                let name = callee.kind.callee_name().map(String::from);
                 let callee = self.eval(callee)?;
                 let args = Args(
                     args.iter()
@@ -210,17 +210,6 @@ impl<'a> RuntimeEnv<'a> {
 
 pub fn eval(node: &Node, scope: &mut RuntimeEnv<'_>) -> Result<Value> {
     scope.eval(node)
-}
-
-/// The name a callee was written as, kept only so a failed call can say which one it was.
-fn callee_name(node: &NodeKind) -> Option<&str> {
-    match node {
-        NodeKind::Atom(Atom::Ident(Ident(name))) => Some(name),
-        NodeKind::Member {
-            field: Ident(f), ..
-        } => Some(f),
-        _ => None,
-    }
 }
 
 fn call_value(

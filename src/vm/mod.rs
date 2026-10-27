@@ -1,8 +1,8 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 
 use crate::{
-    Env, Node, RuntimeError, Value,
-    value::{Array, Number, Object},
+    Env, Node, RuntimeError, Spanned, Value,
+    value::{Array, Number, Object, ValueType},
     vm::{
         constants::ConstantsPool,
         opcode::{Instructions, OpCode},
@@ -15,9 +15,17 @@ mod constants;
 mod opcode;
 mod stack;
 
+#[derive(Debug)]
+struct CallFrame {
+    instructions: Instructions,
+    ip: usize,
+    base_idx: usize,
+}
+
 pub struct VirtualMachine<'a> {
     ip: usize,
     code: Instructions,
+    frames: Vec<CallFrame>,
     constants: ConstantsPool,
     env: &'a Env,
     stack: Stack,
@@ -27,6 +35,7 @@ impl<'a> VirtualMachine<'a> {
     pub fn new(code: Instructions, constants: ConstantsPool, env: &'a Env) -> Self {
         Self {
             ip: 0,
+            frames: Vec::new(),
             code,
             env,
             constants,
@@ -45,7 +54,12 @@ impl<'a> VirtualMachine<'a> {
         Ok(())
     }
 
-    fn eval(&mut self) -> std::result::Result<Value, RuntimeError> {
+    fn eval(&mut self) -> std::result::Result<Value, Spanned<RuntimeError>> {
+        self.eval_inner()
+            .map_err(|e| e.with_span(self.code.span_for(self.ip)))
+    }
+
+    fn eval_inner(&mut self) -> std::result::Result<Value, RuntimeError> {
         while self.ip < self.code.len() {
             let code = self.code.get(self.ip);
             match code {
@@ -217,11 +231,17 @@ impl<'a> VirtualMachine<'a> {
                     for _ in 0..*args_count {
                         args.push(self.stack.pop());
                     }
-                    let Value::Function(calee) = self.stack.pop() else {
-                        todo!("handle error")
+                    let calee = match self.stack.pop() {
+                        Value::Function(calee) => calee,
+                        rest => {
+                            return Err(RuntimeError::UnexpectedType {
+                                got: rest.value_type(),
+                                expected: ValueType::Function,
+                            });
+                        }
                     };
                     self.stack.push(
-                        calee.call(&mut crate::RuntimeEnv::new(&self.env), crate::Args(args))?,
+                        calee.call(&mut crate::RuntimeEnv::new(self.env), crate::Args(args))?,
                     );
                     self.ip += 1;
                 }
@@ -233,12 +253,9 @@ impl<'a> VirtualMachine<'a> {
 
 pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
     let mut complier = compiler::Compiler::new();
-    complier.compile(node);
+    complier.compile(&node);
     let mut vm = complier.into_vm(env);
-    Ok(vm.eval().map_err(|e| crate::Spanned {
-        inner: e,
-        span: crate::Span::new(0..0),
-    })?)
+    Ok(vm.eval()?)
 }
 
 #[cfg(test)]
@@ -249,7 +266,7 @@ mod tests {
 
     fn ev(s: &str) -> Value {
         let mut compiler = Compiler::new();
-        compiler.compile(crate::parser::parse_expr(s).unwrap());
+        compiler.compile(&crate::parser::parse_expr(s).unwrap());
         let env = crate::Env::std();
         let mut vm = compiler.into_vm(&env);
         let value = vm.eval().unwrap();
@@ -319,5 +336,8 @@ mod tests {
     #[test]
     fn external_fn_call() {
         assert_eq!(ev("to_uppercase('bar')"), "BAR".into());
+        assert_eq!(ev("'hahaha' | replace_all('ha', 'hi')"), "hihihi".into());
+        assert_eq!(ev("replace_all('hahaha', 'ha', 'hi')"), "hihihi".into());
+        assert_eq!(ev("' a ' | trim | to_uppercase"), "A".into());
     }
 }

@@ -1,4 +1,4 @@
-use crate::{Punct, span::Spanned, value::ValueType};
+use crate::{Punct, Span, span::Spanned, value::ValueType};
 
 /// Bytecode evaluation implementation
 pub mod bytecode;
@@ -59,6 +59,10 @@ impl RuntimeError {
             RuntimeError::NonNullishAssertion => Some("accesses annotated with non nullish operator must not be void or null".to_string()),
             RuntimeError::DepthLimitReached => None,
         }
+    }
+
+    pub fn with_span(self, span: Span) -> Spanned<Self> {
+        Spanned { inner: self, span }
     }
 }
 

@@ -172,6 +172,18 @@ pub enum NodeKind {
     Atom(Atom),
 }
 
+impl NodeKind {
+    pub fn callee_name(&self) -> Option<&str> {
+        match self {
+            NodeKind::Atom(Atom::Ident(Ident(name))) => Some(name),
+            NodeKind::Member {
+                field: Ident(f), ..
+            } => Some(f),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Parser {
     lex: Lexer,
@@ -1166,7 +1178,7 @@ mod tests {
     #[test]
     fn non_nullish_assertion_chain_should_fail() -> Result<()> {
         assert!(
-            dbg!(parse_expr("5!!")).is_err(),
+            parse_expr("5!!").is_err(),
             "double assertion operator should not parse"
         );
         Ok(())
@@ -1216,7 +1228,7 @@ mod tests {
         for _ in 0..depth {
             s.push_str(")")
         }
-        let err = parse_expr(dbg!(&s)).unwrap_err();
+        let err = parse_expr(&s).unwrap_err();
         assert_matches!(
             err,
             crate::error::Error::Parser(Spanned {
