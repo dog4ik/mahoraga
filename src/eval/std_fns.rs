@@ -98,7 +98,7 @@ pub fn std_fns() -> HashMap<&'static str, Rc<Function>> {
         ),
         declare_fn!(
             replace_all(String, String, String),
-            "Replaces all occurrencies of the second argument with the third argument"
+            "Replaces all occurrences of the second argument with the third argument"
         ),
     ]
     .into_iter()

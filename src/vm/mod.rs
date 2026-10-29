@@ -319,9 +319,9 @@ impl<'a> VirtualMachine<'a> {
 }
 
 pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
-    let mut complier = compiler::Compiler::new();
-    complier.compile(&node);
-    let mut vm = complier.into_vm(env);
+    let mut compiler = compiler::Compiler::new();
+    compiler.compile(&node);
+    let mut vm = compiler.into_vm(env);
     Ok(vm.eval()?)
 }
 
