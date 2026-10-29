@@ -246,6 +246,7 @@ pub fn len(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, RuntimeError> {
         | Value::Bool(_)
         | Value::Function(_)
         | Value::Closure(_)
+        | Value::VmClosure(_)
         | Value::Null
         | Value::Void => 0,
     } as i64)))

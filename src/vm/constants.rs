@@ -24,9 +24,15 @@ impl ConstantsPool {
         idx as u16
     }
 
-    pub fn expect_value(&mut self, index: u16) -> &Value {
+    pub fn expect_value(&self, index: u16) -> &Value {
         self.0
             .get(index as usize)
             .expect("all constant index accesses must be valid")
+    }
+}
+
+impl Default for ConstantsPool {
+    fn default() -> Self {
+        Self::new()
     }
 }

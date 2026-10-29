@@ -1,8 +1,9 @@
 use crate::{
-    Atom, Env, Node, NodeKind, Punct, Value,
+    Atom, Env, Ident, Node, NodeKind, Punct, Span, Value,
     value::ValueType,
     vm::{
         VirtualMachine,
+        chunk::Chunk,
         constants::ConstantsPool,
         opcode::{Instructions, OpCode},
     },
@@ -19,29 +20,138 @@ pub enum CompilerError {
 #[derive(Debug)]
 pub struct CompiledFn {
     code: Instructions,
+    constants: ConstantsPool,
+}
+
+#[derive(Debug)]
+pub struct Capture {
+    name: String,
+    from: Access,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Access {
+    Local(u16),
+    Capture(u16),
+}
+
+#[derive(Debug)]
+pub struct FnScope {
+    captures: Vec<Capture>,
+    arg_names: Vec<String>,
+}
+
+impl FnScope {
+    pub fn new() -> Self {
+        Self {
+            captures: Vec::new(),
+            arg_names: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct Compiler {
-    code: Instructions,
-    constants: ConstantsPool,
+    chunk: Chunk,
+    scopes: Vec<FnScope>,
 }
 
 impl Compiler {
     pub fn new() -> Self {
         Self {
-            code: Instructions::new(),
-            constants: ConstantsPool::new(),
+            chunk: Chunk::default(),
+            scopes: vec![FnScope::new()],
         }
     }
 
-    fn compile_op(&mut self, (lhs, rhs): (&Node, &Node), op: OpCode) {
-        self.compile(lhs);
-        self.compile(rhs);
-        self.code.emit(op, lhs.span.start..rhs.span.end);
+    pub fn compile(&mut self, node: &Node) {
+        self.compile_inner(node);
+        self.chunk.emit(OpCode::Return, node.span);
     }
 
-    pub fn compile(&mut self, node: &Node) {
+    pub fn into_vm(self, env: &Env) -> VirtualMachine<'_> {
+        VirtualMachine::new(self.chunk, env)
+    }
+
+    fn compile_op(&mut self, (lhs, rhs): (&Node, &Node), op: OpCode) {
+        self.compile_inner(lhs);
+        self.compile_inner(rhs);
+        self.chunk.emit(op, lhs.span.start..rhs.span.end);
+    }
+
+    fn resolve_ident(&mut self, depth: usize, ident: &Ident) -> Option<Access> {
+        if let Some(slot) = self.scopes[depth]
+            .arg_names
+            .iter()
+            .position(|c| c == &ident.0)
+        {
+            return Some(Access::Local(slot as u16));
+        }
+        if depth == 0 {
+            return None;
+        }
+
+        let from = self.resolve_ident(depth - 1, ident)?;
+        let captures = &mut self.scopes[depth].captures;
+        let idx = match captures.iter().position(|c| c.name == ident.0) {
+            Some(i) => i,
+            None => {
+                captures.push(Capture {
+                    name: ident.0.to_owned(),
+                    from,
+                });
+                captures.len() - 1
+            }
+        };
+
+        Some(Access::Capture(idx as u16))
+    }
+
+    fn compile_closure(&mut self, args: &[Ident], body: &Node, span: Span) {
+        let jump_over_closure = self.chunk.emit(OpCode::Jump { position: u16::MAX }, span);
+        let closure_start = self.chunk.code.len();
+        self.scopes.push(FnScope {
+            captures: Vec::new(),
+            arg_names: args.into_iter().map(|Ident(i)| i.to_string()).collect(),
+        });
+        self.compile_inner(body);
+        let scope = self.scopes.pop().expect("scope was just pushed");
+
+        self.chunk.emit(OpCode::Return, span);
+        self.chunk.patch_jump(jump_over_closure);
+
+        for c in &scope.captures {
+            self.chunk.emit(
+                match c.from {
+                    Access::Local(slot) => OpCode::LoadLocal { slot },
+                    Access::Capture(idx) => OpCode::LoadCapture { idx },
+                },
+                span,
+            );
+        }
+
+        self.chunk.emit(
+            OpCode::MakeClosure {
+                start_idx: closure_start as u16,
+                captures: scope.captures.len() as u8,
+            },
+            span,
+        );
+    }
+
+    fn compile_identifier(&mut self, ident: &Ident, span: Span) {
+        match self.resolve_ident(self.scopes.len() - 1, ident) {
+            Some(Access::Local(local)) => self.chunk.emit(OpCode::LoadLocal { slot: local }, span),
+            Some(Access::Capture(idx)) => self.chunk.emit(OpCode::LoadCapture { idx }, span),
+            None => {
+                let key_constant_idx = self.chunk.constants.add_value(ident.0.clone().into());
+                self.chunk
+                    .emit(OpCode::StaticAccess { key_constant_idx }, span)
+            }
+        };
+    }
+
+    fn compile_inner(&mut self, node: &Node) {
         match &node.kind {
             NodeKind::Op((punct, (lhs, rhs))) => {
                 let op = (lhs.as_ref(), rhs.as_ref());
@@ -59,46 +169,46 @@ impl Compiler {
 
                     Punct::Coalesce => {
                         let (lhs, rhs) = op;
-                        self.compile(lhs);
+                        self.compile_inner(lhs);
                         let jump = self
-                            .code
-                            .emit(OpCode::JumpIfNullishNoPop { offset: u16::MAX }, node.span);
-                        self.code.emit(OpCode::Pop, node.span);
-                        self.compile(rhs);
-                        self.code.patch_jump(jump);
+                            .chunk
+                            .emit(OpCode::JumpIfNullishNoPop { position: u16::MAX }, node.span);
+                        self.chunk.emit(OpCode::Pop, node.span);
+                        self.compile_inner(rhs);
+                        self.chunk.patch_jump(jump);
                     }
                     Punct::Or => {
                         let (lhs, rhs) = op;
-                        self.compile(lhs);
+                        self.compile_inner(lhs);
                         let jump = self
-                            .code
-                            .emit(OpCode::JumpIfTruthyNoPop { offset: u16::MAX }, node.span);
-                        self.code.emit(OpCode::Pop, node.span);
-                        self.compile(rhs);
-                        self.code.patch_jump(jump);
+                            .chunk
+                            .emit(OpCode::JumpIfTruthyNoPop { position: u16::MAX }, node.span);
+                        self.chunk.emit(OpCode::Pop, node.span);
+                        self.compile_inner(rhs);
+                        self.chunk.patch_jump(jump);
                     }
                     Punct::And => {
                         let (lhs, rhs) = op;
-                        self.compile(lhs);
+                        self.compile_inner(lhs);
                         let jump = self
-                            .code
-                            .emit(OpCode::JumpIfFalsyNoPop { offset: u16::MAX }, node.span);
-                        self.code.emit(OpCode::Pop, node.span);
-                        self.compile(rhs);
-                        self.code.patch_jump(jump);
+                            .chunk
+                            .emit(OpCode::JumpIfFalsyNoPop { position: u16::MAX }, node.span);
+                        self.chunk.emit(OpCode::Pop, node.span);
+                        self.compile_inner(rhs);
+                        self.chunk.patch_jump(jump);
                     }
                     Punct::Pipe => {
                         let (callee, rest) = match &rhs.kind {
                             NodeKind::Call { callee, args } => (&**callee, args),
                             _ => (&**rhs, &Vec::new()),
                         };
-                        self.compile(callee);
-                        for arg in rest.iter().rev() {
-                            self.compile(arg);
+                        self.compile_inner(callee);
+                        self.compile_inner(lhs);
+                        for arg in rest {
+                            self.compile_inner(arg);
                         }
-                        self.compile(lhs);
                         let argc = rest.len() + 1;
-                        self.code.emit(
+                        self.chunk.emit(
                             OpCode::FnCall {
                                 args_count: argc as u16,
                             },
@@ -113,116 +223,92 @@ impl Compiler {
                 truth_node,
                 false_node,
             } => {
-                self.compile(operand);
+                self.compile_inner(operand);
                 let jump_to_false = self
-                    .code
-                    .emit(OpCode::JumpIfFalsy { offset: u16::MAX }, false_node.span);
-                self.compile(truth_node);
+                    .chunk
+                    .emit(OpCode::JumpIfFalsy { position: u16::MAX }, false_node.span);
+                self.compile_inner(truth_node);
                 let jump_over_false = self
-                    .code
-                    .emit(OpCode::Jump { offset: u16::MAX }, truth_node.span);
-                self.code.patch_jump(jump_to_false);
-                self.compile(false_node);
-                self.code.patch_jump(jump_over_false);
+                    .chunk
+                    .emit(OpCode::Jump { position: u16::MAX }, truth_node.span);
+                self.chunk.patch_jump(jump_to_false);
+                self.compile_inner(false_node);
+                self.chunk.patch_jump(jump_over_false);
             }
             NodeKind::Member {
                 object,
                 field,
                 field_span,
             } => {
-                self.compile(object);
-                self.code.emit(
-                    OpCode::LoadConstant {
-                        constant_idx: self.constants.add_value(field.0.clone().into()),
-                    },
-                    *field_span,
-                );
-                self.code.emit(OpCode::Index, *field_span);
+                self.compile_inner(object);
+                self.chunk
+                    .load_constant(field.0.clone().into(), *field_span);
+                self.chunk.emit(OpCode::Index, *field_span);
             }
             NodeKind::Index { object, index } => {
-                self.compile(object);
-                self.compile(index);
-                self.code.emit(OpCode::Index, index.span);
+                self.compile_inner(object);
+                self.compile_inner(index);
+                self.chunk.emit(OpCode::Index, index.span);
             }
             NodeKind::Call { callee, args } => {
-                self.compile(callee);
                 let count = args.len();
-                for arg in args.iter().rev() {
-                    self.compile(arg);
+                self.compile_inner(callee);
+                for arg in args {
+                    self.compile_inner(arg);
                 }
-                self.code.emit(
+                self.chunk.emit(
                     OpCode::FnCall {
                         args_count: count as u16,
                     },
                     node.span,
                 );
             }
-            NodeKind::Closure { args, body } => {}
+            NodeKind::Closure { args, body } => {
+                self.compile_closure(args, body, node.span);
+            }
             NodeKind::NonNullishAssertion(node) => {
-                self.compile(node);
-                self.code.emit(OpCode::AssertNotNullish, node.span);
+                self.compile_inner(node);
+                self.chunk.emit(OpCode::AssertNotNullish, node.span);
             }
             NodeKind::Negation(node) => {
-                self.compile(node);
-                self.code.emit(OpCode::Not, node.span);
+                self.compile_inner(node);
+                self.chunk.emit(OpCode::Not, node.span);
             }
             NodeKind::ArrayLit(nodes) => {
                 let size = nodes.len();
                 for node in nodes {
-                    self.compile(node);
+                    self.compile_inner(node);
                 }
-                self.code
+                self.chunk
                     .emit(OpCode::MakeArray { size: size as u16 }, node.span);
             }
             NodeKind::ObjectLit(hash_map) => {
                 let size = hash_map.len();
                 for (key, value) in hash_map {
-                    self.code.emit(
-                        OpCode::LoadConstant {
-                            constant_idx: self.constants.add_value(key.clone().into()),
-                        },
-                        node.span,
-                    );
-                    self.compile(value);
+                    self.chunk.load_constant(key.clone().into(), node.span);
+                    self.compile_inner(value);
                 }
-                self.code
+                self.chunk
                     .emit(OpCode::MakeObject { size: size as u16 }, node.span);
             }
             NodeKind::Atom(atom) => match atom {
                 Atom::Ident(ident) => {
-                    self.code.emit(
-                        OpCode::StaticAccess {
-                            key_constant_idx: self.constants.add_value(ident.0.clone().into()),
-                        },
-                        node.span,
-                    );
+                    self.compile_identifier(ident, node.span);
                 }
                 Atom::StrLit(s) => {
-                    self.code.emit(
-                        OpCode::LoadConstant {
-                            constant_idx: self.constants.add_value(Value::String(s.clone())),
-                        },
-                        node.span,
-                    );
+                    self.chunk
+                        .load_constant(Value::String(s.clone()), node.span);
                 }
                 Atom::FloatLit(f) => {
-                    self.code.emit(
-                        OpCode::LoadConstant {
-                            constant_idx: self.constants.add_value(Value::Number((*f).into())),
-                        },
-                        node.span,
-                    );
+                    self.chunk
+                        .load_constant(Value::Number((*f).into()), node.span);
                 }
                 Atom::IntLit(i) => {
-                    self.code.emit(
-                        OpCode::LoadConstant {
-                            constant_idx: self.constants.add_value(Value::Number((*i).into())),
-                        },
-                        node.span,
-                    );
+                    self.chunk
+                        .load_constant(Value::Number((*i).into()), node.span);
                 }
                 Atom::BoolLit(b) => {
-                    self.code.emit(
+                    self.chunk.emit(
                         OpCode::LoadConstant {
                             constant_idx: match b {
                                 true => ConstantsPool::TRUE,
@@ -233,7 +319,7 @@ impl Compiler {
                     );
                 }
                 Atom::NullLit => {
-                    self.code.emit(
+                    self.chunk.emit(
                         OpCode::LoadConstant {
                             constant_idx: ConstantsPool::NULL,
                         },
@@ -241,7 +327,7 @@ impl Compiler {
                     );
                 }
                 Atom::VoidLit => {
-                    self.code.emit(
+                    self.chunk.emit(
                         OpCode::LoadConstant {
                             constant_idx: ConstantsPool::VOID,
                         },
@@ -250,9 +336,5 @@ impl Compiler {
                 }
             },
         }
-    }
-
-    pub fn into_vm(self, env: &Env) -> VirtualMachine<'_> {
-        VirtualMachine::new(self.code, self.constants, env)
     }
 }

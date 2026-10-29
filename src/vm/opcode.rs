@@ -1,6 +1,6 @@
 use crate::Span;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum OpCode {
     LoadConstant {
         constant_idx: u16,
@@ -17,22 +17,22 @@ pub enum OpCode {
     Neq,
     Not,
     Jump {
-        offset: u16,
+        position: u16,
     },
     JumpIfFalsy {
-        offset: u16,
+        position: u16,
     },
     JumpIfTruthy {
-        offset: u16,
+        position: u16,
     },
     JumpIfNullishNoPop {
-        offset: u16,
+        position: u16,
     },
     JumpIfFalsyNoPop {
-        offset: u16,
+        position: u16,
     },
     JumpIfTruthyNoPop {
-        offset: u16,
+        position: u16,
     },
     AssertNotNullish,
     /// Pop a single value from the stack
@@ -44,15 +44,27 @@ pub enum OpCode {
         size: u16,
     },
     Index,
+    /// Identefier access. Used to resolve identifiers
     StaticAccess {
         key_constant_idx: u16,
     },
     FnCall {
         args_count: u16,
     },
+    MakeClosure {
+        start_idx: u16,
+        captures: u8,
+    },
+    LoadLocal {
+        slot: u16,
+    },
+    LoadCapture {
+        idx: u16,
+    },
+    Return,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Instructions {
     code: Vec<OpCode>,
     spans: Vec<Span>,
@@ -80,17 +92,17 @@ impl Instructions {
     pub fn patch_jump(&mut self, at: usize) {
         let target = self.code.len() as u32;
         match &mut self.code[at] {
-            OpCode::Jump { offset }
-            | OpCode::JumpIfFalsy { offset }
-            | OpCode::JumpIfTruthy { offset }
-            | OpCode::JumpIfFalsyNoPop { offset }
-            | OpCode::JumpIfTruthyNoPop { offset } => *offset = target as u16,
-            OpCode::JumpIfNullishNoPop { offset } => *offset = target as u16,
+            OpCode::Jump { position: offset }
+            | OpCode::JumpIfFalsy { position: offset }
+            | OpCode::JumpIfTruthy { position: offset }
+            | OpCode::JumpIfFalsyNoPop { position: offset }
+            | OpCode::JumpIfTruthyNoPop { position: offset } => *offset = target as u16,
+            OpCode::JumpIfNullishNoPop { position: offset } => *offset = target as u16,
             rest => unreachable!("only jump opcodes can be patched, got {rest:?}"),
         }
     }
 
-    pub fn get(&mut self, n: usize) -> &OpCode {
+    pub fn get(&self, n: usize) -> &OpCode {
         &self.code[n]
     }
 
