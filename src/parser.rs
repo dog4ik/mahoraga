@@ -7,7 +7,6 @@ use std::{
 use crate::{
     Span, facts,
     lex::{Atom, Ident, Lexer, Punct, Tok, Token},
-    punct_tok,
     span::Spanned,
 };
 
@@ -206,7 +205,7 @@ impl Parser {
         if !matches!(self.lex.peek(), Some(Token { tok: Tok::Punct(p), .. }) if p == terminator) {
             items.push(self.parse_expr(0)?);
             while let Some(Token {
-                tok: punct_tok!(","),
+                tok: Tok::Punct(Punct::Comma),
                 ..
             }) = self.lex.peek()
             {
@@ -226,7 +225,7 @@ impl Parser {
         if !matches!(
             self.lex.peek(),
             Some(Token {
-                tok: punct_tok!("}"),
+                tok: Tok::Punct(Punct::CloseBrace),
                 ..
             })
         ) {
@@ -242,11 +241,11 @@ impl Parser {
                     ));
                 }
             };
-            self.lex.expect_next(punct_tok!(":"))?;
+            self.lex.expect_next(Punct::Colon.into())?;
             let value = self.parse_expr(0)?;
             entries.insert(key, value);
             while let Some(Token {
-                tok: punct_tok!(","),
+                tok: Tok::Punct(Punct::Comma),
                 ..
             }) = self.lex.peek()
             {
@@ -254,7 +253,7 @@ impl Parser {
 
                 // ignore trailing comma
                 if let Some(Token {
-                    tok: punct_tok!("}"),
+                    tok: Tok::Punct(Punct::CloseBrace),
                     ..
                 }) = self.lex.peek()
                 {
@@ -273,7 +272,7 @@ impl Parser {
                         ));
                     }
                 };
-                self.lex.expect_next(punct_tok!(":"))?;
+                self.lex.expect_next(Punct::Colon.into())?;
                 let value = self.parse_expr(0)?;
                 entries.insert(key, value);
             }
@@ -301,7 +300,7 @@ impl Parser {
             }
 
             while let Some(Token {
-                tok: punct_tok!(","),
+                tok: Tok::Punct(Punct::Comma),
                 ..
             }) = self.lex.peek()
             {
@@ -465,7 +464,7 @@ impl Parser {
                 match punct {
                     Punct::OpenBracket => {
                         let index = self.parse_expr(0)?;
-                        let end_token = self.lex.expect_next(punct_tok!("]"))?;
+                        let end_token = self.lex.expect_next(Punct::CloseBracket.into())?;
 
                         lhs = Node {
                             span: lhs.span.merge(end_token.span),
@@ -540,7 +539,7 @@ impl Parser {
 
                 if punct == Punct::Question {
                     let mhs = self.parse_expr(0)?;
-                    self.lex.expect_next(punct_tok!(":"))?;
+                    self.lex.expect_next(Punct::Colon.into())?;
                     let rhs = self.parse_expr(r_bp)?;
                     lhs = Node {
                         span: lhs.span.merge(rhs.span),

@@ -98,6 +98,18 @@ pub enum Tok {
     Punct(Punct),
 }
 
+impl From<Atom> for Tok {
+    fn from(value: Atom) -> Self {
+        Self::Atom(value)
+    }
+}
+
+impl From<Punct> for Tok {
+    fn from(value: Punct) -> Self {
+        Self::Punct(value)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     pub tok: Tok,
@@ -146,85 +158,6 @@ pub enum Punct {
     Or,
     And,
     Comma,
-}
-
-#[macro_export]
-macro_rules! punct_tok {
-    ("+") => {
-        Tok::Punct(Punct::Add)
-    };
-    ("*") => {
-        Tok::Punct(Punct::Mul)
-    };
-    ("-") => {
-        Tok::Punct(Punct::Sub)
-    };
-    ("/") => {
-        Tok::Punct(Punct::Div)
-    };
-    ("(") => {
-        Tok::Punct(Punct::OpenParen)
-    };
-    (")") => {
-        Tok::Punct(Punct::CloseParen)
-    };
-    ("?") => {
-        Tok::Punct(Punct::Question)
-    };
-    (":") => {
-        Tok::Punct(Punct::Colon)
-    };
-    ("??") => {
-        Tok::Punct(Punct::Coalesce)
-    };
-    (".") => {
-        Tok::Punct(Punct::Dot)
-    };
-    ("|") => {
-        Tok::Punct(Punct::Pipe)
-    };
-    (">") => {
-        Tok::Punct(Punct::More)
-    };
-    (">=") => {
-        Tok::Punct(Punct::MoreOrEq)
-    };
-    ("<") => {
-        Tok::Punct(Punct::Less)
-    };
-    ("<=") => {
-        Tok::Punct(Punct::LessOrEq)
-    };
-    ("==") => {
-        Tok::Punct(Punct::CmpEqual)
-    };
-    ("!=") => {
-        Tok::Punct(Punct::CmpNotEqual)
-    };
-    ("!") => {
-        Tok::Punct(Punct::Bang)
-    };
-    ("||") => {
-        Tok::Punct(Punct::Or)
-    };
-    ("&&") => {
-        Tok::Punct(Punct::And)
-    };
-    ("[") => {
-        Tok::Punct(Punct::OpenBracket)
-    };
-    ("]") => {
-        Tok::Punct(Punct::CloseBracket)
-    };
-    ("{") => {
-        Tok::Punct(Punct::OpenBrace)
-    };
-    ("}") => {
-        Tok::Punct(Punct::CloseBrace)
-    };
-    (",") => {
-        Tok::Punct(Punct::Comma)
-    };
 }
 
 impl Punct {
@@ -817,9 +750,9 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 Tok::Atom(Atom::Ident(Ident("foo".into()))),
-                punct_tok!("("),
+                Punct::OpenParen.into(),
                 Tok::Atom(Atom::IntLit(1)),
-                punct_tok!(")"),
+                Punct::CloseParen.into(),
             ]
         );
         for src in ["a>b", "a<b", "a==b", "a>=1", "1<b"] {
@@ -834,31 +767,31 @@ mod tests {
             tokenize("+-/*()??value 11")?,
             vec![
                 Token {
-                    tok: punct_tok!("+"),
+                    tok: Punct::Add.into(),
                     span: Span { start: 0, end: 1 },
                 },
                 Token {
-                    tok: punct_tok!("-"),
+                    tok: Punct::Sub.into(),
                     span: Span { start: 1, end: 2 },
                 },
                 Token {
-                    tok: punct_tok!("/"),
+                    tok: Punct::Div.into(),
                     span: Span { start: 2, end: 3 },
                 },
                 Token {
-                    tok: punct_tok!("*"),
+                    tok: Punct::Mul.into(),
                     span: Span { start: 3, end: 4 },
                 },
                 Token {
-                    tok: punct_tok!("("),
+                    tok: Punct::OpenParen.into(),
                     span: Span { start: 4, end: 5 },
                 },
                 Token {
-                    tok: punct_tok!(")"),
+                    tok: Punct::CloseParen.into(),
                     span: Span { start: 5, end: 6 },
                 },
                 Token {
-                    tok: punct_tok!("??"),
+                    tok: Punct::Coalesce.into(),
                     span: Span { start: 6, end: 8 },
                 },
                 Token {
@@ -994,7 +927,7 @@ mod tests {
             tokenize(r#"(3)"#)?,
             vec![
                 Token {
-                    tok: punct_tok!("("),
+                    tok: Punct::OpenParen.into(),
                     span: Span { start: 0, end: 1 }
                 },
                 Token {
@@ -1002,7 +935,7 @@ mod tests {
                     span: Span { start: 1, end: 2 }
                 },
                 Token {
-                    tok: punct_tok!(")"),
+                    tok: Punct::CloseParen.into(),
                     span: Span { start: 2, end: 3 }
                 }
             ]
@@ -1020,7 +953,7 @@ mod tests {
                     span: Span { start: 0, end: 2 }
                 },
                 Token {
-                    tok: punct_tok!("?"),
+                    tok: Punct::Question.into(),
                     span: Span { start: 3, end: 4 }
                 },
                 Token {
@@ -1028,7 +961,7 @@ mod tests {
                     span: Span { start: 5, end: 6 }
                 },
                 Token {
-                    tok: punct_tok!(":"),
+                    tok: Punct::Colon.into(),
                     span: Span { start: 7, end: 8 }
                 },
                 Token {
@@ -1056,7 +989,7 @@ mod tests {
                     span: Span { start: 0, end: 3 }
                 },
                 Token {
-                    tok: punct_tok!("."),
+                    tok: Punct::Dot.into(),
                     span: Span { start: 3, end: 4 }
                 },
                 Token {
@@ -1064,7 +997,7 @@ mod tests {
                     span: Span { start: 4, end: 7 }
                 },
                 Token {
-                    tok: punct_tok!("."),
+                    tok: Punct::Dot.into(),
                     span: Span { start: 7, end: 8 }
                 },
                 Token {
@@ -1086,7 +1019,7 @@ mod tests {
                     span: Span { start: 0, end: 4 }
                 },
                 Token {
-                    tok: punct_tok!("."),
+                    tok: Punct::Dot.into(),
                     span: Span { start: 4, end: 5 }
                 },
                 Token {
@@ -1094,7 +1027,7 @@ mod tests {
                     span: Span { start: 5, end: 10 }
                 },
                 Token {
-                    tok: punct_tok!("."),
+                    tok: Punct::Dot.into(),
                     span: Span { start: 10, end: 11 }
                 },
                 Token {
@@ -1116,7 +1049,7 @@ mod tests {
                     span: Span { start: 0, end: 1 }
                 },
                 Token {
-                    tok: punct_tok!("<="),
+                    tok: Punct::LessOrEq.into(),
                     span: Span { start: 2, end: 4 }
                 },
                 Token {
@@ -1138,7 +1071,7 @@ mod tests {
                     span: Span { start: 0, end: 1 }
                 },
                 Token {
-                    tok: punct_tok!("=="),
+                    tok: Punct::CmpEqual.into(),
                     span: Span { start: 2, end: 4 }
                 },
                 Token {
@@ -1218,7 +1151,7 @@ mod tests {
         assert_matches!(
             lexer.peek(),
             Some(Token {
-                tok: punct_tok!("+"),
+                tok: Tok::Punct(Punct::Add),
                 span: _
             })
         );
@@ -1226,7 +1159,7 @@ mod tests {
         assert_matches!(
             lexer.advance(),
             Some(Token {
-                tok: punct_tok!("+"),
+                tok: Tok::Punct(Punct::Add),
                 span: _
             })
         );
@@ -1242,7 +1175,7 @@ mod tests {
         assert_matches!(
             lexer.advance(),
             Some(Token {
-                tok: punct_tok!("-"),
+                tok: Tok::Punct(Punct::Sub),
                 span: _
             })
         );
