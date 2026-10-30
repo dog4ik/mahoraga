@@ -475,12 +475,14 @@ mod tests {
 
     #[test]
     fn containers_and_bools_convert() {
-        assert!(bool::try_from(Value::Bool(true)).unwrap());
-        assert!(Object::try_from(Value::Object(Object::default())).is_ok());
+        use crate::TryFromArgument;
+        assert!(bool::parse_argument(Value::Bool(true)).unwrap());
+        assert!(Object::parse_argument(Value::Object(Object::default())).is_ok());
         assert!(
-            crate::value::Array::try_from(Value::Array(crate::value::Array::default())).is_ok()
+            crate::value::Array::parse_argument(Value::Array(crate::value::Array::default()))
+                .is_ok()
         );
-        assert!(bool::try_from(Value::Void).is_err());
+        assert!(bool::parse_argument(Value::Void).is_err());
     }
 
     #[test]

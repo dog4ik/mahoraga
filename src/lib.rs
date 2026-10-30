@@ -21,6 +21,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub use engine::{Engine, SetEnvError};
 pub use eval::Env;
 pub use eval::env::RuntimeEnv;
+pub use eval::fns::TryFromArgument;
 pub use eval::fns::{Args, Callable, Function};
 pub use eval::traverse::eval;
 pub use parser::parse_expr;

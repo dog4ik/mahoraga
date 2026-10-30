@@ -79,10 +79,12 @@ pub enum ArgConversionError {
         got: ValueType,
         expected: &'static [ValueType],
     },
+    #[error("number overflow")]
+    NumberOverflow,
     #[error("{0}")]
-    IntConversionError(std::num::TryFromIntError),
+    IntConversionError(#[from] std::num::TryFromIntError),
     #[error("{0}")]
-    FloatConversionError(std::num::ParseFloatError),
+    FloatConversionError(#[from] std::num::ParseFloatError),
 }
 
 impl From<std::convert::Infallible> for ArgConversionError {

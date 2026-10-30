@@ -74,6 +74,10 @@ impl Debug for Function {
     }
 }
 
+pub trait TryFromArgument: Sized {
+    fn parse_argument(value: Value) -> Result<Self, crate::ArgConversionError>;
+}
+
 pub trait Callable {
     fn call(&self, ctx: &mut RuntimeEnv<'_>, args: Args) -> Result<Value, RuntimeError>;
     /// Counting the piped input, which a pipe supplies as the first argument.
@@ -84,17 +88,14 @@ macro_rules! impl_callable_with_args {
     () => {};
     ($(($($types:ident),*)),*) => {
         $(
-            impl<$($types: TryFrom<crate::Value> + 'static),*> Callable for fn(&mut RuntimeEnv<'_>, $($types,)*) -> std::result::Result<$crate::Value, $crate::eval::RuntimeError>
-            where
-                $($crate::eval::ArgConversionError: From<<$types as TryFrom<crate::Value>>::Error>),*
-            {
+            impl<$($types: $crate::TryFromArgument),*> Callable for fn(&mut RuntimeEnv<'_>, $($types,)*) -> std::result::Result<$crate::Value, $crate::eval::RuntimeError> {
                 fn call(&self, ctx: &mut RuntimeEnv<'_>, args: Args) -> std::result::Result<$crate::Value, $crate::eval::RuntimeError> {
                     let mut args = args.0.into_iter();
                     let args_len = args.len();
                     (self)(
                         ctx,
                         $(
-                            $types::try_from(args.next().unwrap_or($crate::Value::Void)).map_err(|err|
+                            $types::parse_argument(args.next().unwrap_or($crate::Value::Void)).map_err(|err|
                                 $crate::eval::FunctionCallError::InvalidArgument {
                                     err: err.into(),
                                     argument_pos: args_len - args.len()}
