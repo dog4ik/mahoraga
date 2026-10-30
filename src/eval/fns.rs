@@ -8,6 +8,7 @@ use crate::{
     eval::{FunctionCallError, env::RuntimeEnv},
 };
 
+/// Native function input arguments value list
 #[derive(Debug)]
 pub struct Args(pub Vec<Value>);
 
@@ -21,6 +22,7 @@ impl Args {
     }
 }
 
+/// Rust native functions representation
 pub struct Function {
     pub name: Rc<str>,
     pub help: Option<&'static str>,

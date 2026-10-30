@@ -54,9 +54,12 @@ impl ParserError {
     }
 }
 
+/// Parsed AST tree representation
+///
+/// Usually parsed form the source code input [parse_expr](crate::parser::parse_expr)
 #[derive(Debug, Clone, PartialEq)]
 pub struct Node {
-    /// Full node span
+    /// Span occupied by the node
     pub span: Span,
     pub kind: NodeKind,
 }
@@ -142,32 +145,42 @@ impl Display for Node {
 #[derive(Debug, Clone, PartialEq)]
 pub enum NodeKind {
     Op((Punct, (Box<Node>, Box<Node>))),
+    /// Turnary operator: `bool ? true : false`
     Turnary {
         operand: Box<Node>,
         truth_node: Box<Node>,
         false_node: Box<Node>,
     },
+    /// Object member accessor: `foo.field`
     Member {
         object: Box<Node>,
         field: Ident,
         field_span: Span,
     },
+    /// Array or object member accessor: `array[index]` `object[index]`
     Index {
         object: Box<Node>,
         index: Box<Node>,
     },
+    /// Method or function call: `foo(arg_0, arg_1)`
     Call {
         callee: Box<Node>,
         args: Vec<Node>,
     },
+    /// Closure: `|a, b| a + b`
     Closure {
         args: Vec<Ident>,
         body: Rc<Node>,
     },
+    /// Non null builtin assert operator: `object!`
     NonNullishAssertion(Box<Node>),
+    /// Negate the node value `!value`
     Negation(Box<Node>),
+    /// Array literal expression: `[1, "foo", {}, []]`
     ArrayLit(Vec<Node>),
+    /// Object literal expression: `{ 'pi_value': constants.pi }`
     ObjectLit(HashMap<String, Node>),
+    /// Basic source code literal: `1.12`, `"foo"`, `null`, `void` etc.
     Atom(Atom),
 }
 

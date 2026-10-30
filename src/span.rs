@@ -1,6 +1,6 @@
 use std::{error::Error, fmt::Display, ops::RangeBounds};
 
-/// Represents byte index in the input
+/// Byte index range in the source code
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
     pub start: usize,
@@ -14,6 +14,7 @@ impl From<Span> for miette::SourceSpan {
     }
 }
 
+/// Wrapper that includes span information alongside the inner type
 #[derive(Debug)]
 pub struct Spanned<T> {
     pub inner: T,

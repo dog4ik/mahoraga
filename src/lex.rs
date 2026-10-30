@@ -8,6 +8,7 @@ use crate::{
     span::{Span, Spanned},
 };
 
+/// Number literal notation (e.g. 100_000) error
 #[derive(Debug, thiserror::Error)]
 pub enum NumLiteralError {
     #[error("only one underscore is allowed as numeric separator")]
@@ -131,6 +132,9 @@ impl Display for Tok {
     }
 }
 
+/// Punctuation token
+///
+/// Operators like [Punct::MoreOrEq] (`>=`), [Punct::Coalesce] (`??`), etc. are all treated as [Punct]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Punct {
     Add,
@@ -226,6 +230,7 @@ impl Display for Punct {
     }
 }
 
+/// Any basic literal inside expressed in source code: `1.12`, `"foo"`, `null`, `void`, `true` etc.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Atom {
     Ident(Ident),
@@ -281,6 +286,7 @@ impl Display for Atom {
     }
 }
 
+/// Identifier that represents variable or function
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ident(pub String);
 

@@ -58,6 +58,15 @@ impl Display for Object {
     }
 }
 
+/// Internal number representation
+///
+/// Every number is expressed either as [f64] or [i64], integer overflow or division by zero will
+/// result in [RuntimeError].
+///
+/// Integer will be converted to float in cases where the result might produce floats (except
+/// `int / int` that will use integer division).
+///
+/// Note that internal representation also affects how [Number] is formatted or serialized
 #[derive(Debug, Clone, Copy)]
 pub enum Number {
     Float(f64),
@@ -186,7 +195,7 @@ pub enum Value {
     Void,
 }
 
-/// All possible value types
+/// Runtime value type
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum ValueType {
     String,
