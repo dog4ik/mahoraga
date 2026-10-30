@@ -5,11 +5,11 @@ Small WIP expression language
 ## Usage example
 
 ```rust
-fn my_custom_fn(s: String, n: usize) -> Result<mahoraga::Value, mahoraga::RuntimeError> {
+fn my_custom_fn(_: &mut mahoraga::RuntimeEnv<'_>, s: String, n: usize) -> Result<mahoraga::Value, mahoraga::RuntimeError> {
     Ok(std::iter::repeat_n(s, n).collect::<String>().into())
 }
 
-fn main() -> miette::Result<()> {
+fn main() {
     let mut env = mahoraga::Env::default();
     assert_eq!(
         mahoraga::eval_str("1 + 2 * 5", &env).unwrap(),
@@ -25,10 +25,5 @@ fn main() -> miette::Result<()> {
         mahoraga::eval_str("my_custom_fn('test', 2)", &env).unwrap(),
         "testtest".into(),
     );
-
-    let source = "'test' + 2";
-    mahoraga::eval_str(source, &env)
-        .map_err(|err| miette::Report::new(err).with_source_code(source.to_string()))?;
-    Ok(())
 }
 ```
