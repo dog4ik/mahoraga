@@ -415,6 +415,19 @@ impl Parser {
                 }
             }
 
+            // Handle `||` that means empty arguments for closure in the start of the expression
+            Tok::Punct(Punct::Or) => {
+                let body = self.parse_expr(0)?;
+                let body_span = body.span;
+                Node {
+                    kind: NodeKind::Closure {
+                        args: Vec::new(),
+                        body: Rc::new(body),
+                    },
+                    span: start_span.merge(body_span),
+                }
+            }
+
             Tok::Punct(p @ (Punct::Add | Punct::Sub | Punct::Bang)) => {
                 let ((), r_bp) = p
                     .prefix_binding_power()
@@ -1223,6 +1236,21 @@ mod tests {
                         span: Span::new(7..8),
                         kind: NodeKind::Atom(5.into())
                     })
+                },
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn parse_empty_closure() -> Result<()> {
+        assert_eq!(
+            parse_expr("|| 2 + 2")?,
+            Node {
+                span: Span::new(0..8),
+                kind: NodeKind::Closure {
+                    args: vec![],
+                    body: Rc::new(op(Punct::Add, atom(2, 3..4), atom(2, 7..8), 3..8))
                 },
             }
         );
