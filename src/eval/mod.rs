@@ -5,7 +5,6 @@ pub mod bytecode;
 pub mod closure;
 pub mod env;
 pub mod fns;
-pub mod stack;
 pub mod std_fns;
 /// Traverse evaluation implementation
 pub mod traverse;
@@ -115,6 +114,14 @@ pub enum FunctionCallError {
     External(String),
 }
 
+pub trait ExecutionContext {
+    fn call(
+        &mut self,
+        f: &crate::value::CallableRef,
+        args: crate::Args,
+    ) -> std::result::Result<crate::Value, Spanned<crate::RuntimeError>>;
+}
+
 #[cfg(test)]
 mod tests {
     use std::assert_matches;
@@ -123,9 +130,10 @@ mod tests {
 
     use super::*;
     use crate::{
-        Node, RuntimeEnv, Value,
+        Node, Value,
         parser::parse_expr,
         span::Span,
+        traverse::RuntimeEnv,
         value::{Array, Object, ValueType},
     };
 

@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     RuntimeError, Value,
-    eval::{FunctionCallError, env::RuntimeEnv},
+    eval::{ExecutionContext, FunctionCallError},
 };
 
 /// Native function input arguments value list
@@ -29,24 +29,13 @@ pub struct Function {
     pub f: Box<dyn Callable>,
 }
 
-impl Function {
-    /// How many arguments this function takes. A piped call supplies the first
-    /// of them, so `x | f(a)` reaches a function of arity 2.
-    pub fn arity(&self) -> usize {
-        self.f.arity()
+impl Callable for Function {
+    fn call(&self, ctx: &mut dyn ExecutionContext, args: Args) -> Result<Value, RuntimeError> {
+        self.f.call(ctx, args)
     }
 
-    /// Check arity, then invoke, tagging both failures with the function name.
-    pub fn call(&self, env: &mut RuntimeEnv<'_>, args: Args) -> Result<Value, RuntimeError> {
-        let arity = self.f.arity();
-        if args.len() != arity {
-            Err(FunctionCallError::InvalidArity {
-                name: self.name.to_string(),
-                got: args.len(),
-                expected: arity,
-            })?;
-        }
-        self.f.call(env, args)
+    fn arity(&self) -> usize {
+        self.f.arity()
     }
 }
 
@@ -79,7 +68,7 @@ pub trait TryFromArgument: Sized {
 }
 
 pub trait Callable {
-    fn call(&self, ctx: &mut RuntimeEnv<'_>, args: Args) -> Result<Value, RuntimeError>;
+    fn call(&self, ctx: &mut dyn ExecutionContext, args: Args) -> Result<Value, RuntimeError>;
     /// Counting the piped input, which a pipe supplies as the first argument.
     fn arity(&self) -> usize;
 }
@@ -88,8 +77,8 @@ macro_rules! impl_callable_with_args {
     () => {};
     ($(($($types:ident),*)),*) => {
         $(
-            impl<$($types: $crate::TryFromArgument),*> Callable for fn(&mut RuntimeEnv<'_>, $($types,)*) -> std::result::Result<$crate::Value, $crate::eval::RuntimeError> {
-                fn call(&self, ctx: &mut RuntimeEnv<'_>, args: Args) -> std::result::Result<$crate::Value, $crate::eval::RuntimeError> {
+            impl<$($types: $crate::TryFromArgument),*> Callable for fn(&mut dyn ExecutionContext, $($types,)*) -> std::result::Result<$crate::Value, $crate::eval::RuntimeError> {
+                fn call(&self, ctx: &mut dyn ExecutionContext, args: Args) -> std::result::Result<$crate::Value, $crate::eval::RuntimeError> {
                     let mut args = args.0.into_iter();
                     let args_len = args.len();
                     (self)(

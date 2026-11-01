@@ -1,9 +1,5 @@
 use crate::{
-    Env, RuntimeEnv, Value,
-    eval::traverse::eval,
-    parse_expr,
-    parser::Node,
-    value::{Array, Object, ValueType},
+    Env, Value, eval::traverse::eval, parse_expr, parser::Node, traverse::RuntimeEnv, value::{Array, Object, ValueType},
 };
 
 #[derive(Debug, thiserror::Error, PartialEq)]

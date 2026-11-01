@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use crate::{
     Atom, Env, Ident, Node, NodeKind, Punct, Span, Value,
     value::ValueType,
@@ -70,7 +72,11 @@ impl Compiler {
     }
 
     pub fn into_vm(self, env: &Env) -> VirtualMachine<'_> {
-        VirtualMachine::new(self.chunk, env)
+        VirtualMachine::new(Rc::new(self.chunk), env)
+    }
+
+    pub fn into_chunk(self) -> Chunk {
+        self.chunk
     }
 
     fn compile_op(&mut self, (lhs, rhs): (&Node, &Node), op: OpCode) {

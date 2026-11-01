@@ -2,7 +2,7 @@ use std::{collections::HashMap, f64::consts, rc::Rc};
 
 use crate::{
     Function, Value,
-    eval::{stack::Stack, std_fns},
+    eval::std_fns,
     value::{Number, Object},
 };
 
@@ -37,29 +37,5 @@ impl Env {
     pub fn merge(&mut self, other: Env) {
         self.fns.extend(other.fns);
         self.runtime_objects.0.extend(other.runtime_objects.0);
-    }
-}
-
-/// Mutable variable scope used at runtime
-pub struct RuntimeEnv<'a> {
-    pub env: &'a Env,
-    pub current_depth: usize,
-    pub stack: Stack,
-}
-
-impl RuntimeEnv<'_> {
-    pub fn new(env: &Env) -> RuntimeEnv<'_> {
-        RuntimeEnv {
-            env,
-            current_depth: 0,
-            stack: Stack::new(),
-        }
-    }
-
-    pub fn lookup_value(&self, name: &str) -> Option<&Value> {
-        self.stack
-            .into_iter()
-            .find_map(|frame| frame.get(name))
-            .or_else(|| self.env.runtime_objects.0.get(name))
     }
 }

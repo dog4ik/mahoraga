@@ -1,14 +1,16 @@
-use std::{collections::HashMap, debug_assert_matches, rc::Rc};
+use std::{collections::HashMap, rc::Rc};
 
 use crate::{
-    Env, Node, RuntimeError, Spanned, Value,
+    Callable, Env, Node, RuntimeError, Spanned, Value,
+    eval::ExecutionContext,
+    traverse::RuntimeEnv,
     value::{Array, Number, Object, ValueType},
     vm::{closure::VmClosure, opcode::OpCode, stack::Stack},
 };
 
-mod chunk;
+pub mod chunk;
 pub mod closure;
-mod compiler;
+pub mod compiler;
 mod constants;
 mod opcode;
 mod stack;
@@ -22,8 +24,6 @@ struct CallFrame {
     base_idx: usize,
 }
 
-impl CallFrame {}
-
 pub struct VirtualMachine<'a> {
     frames: Vec<CallFrame>,
     env: &'a Env,
@@ -32,10 +32,10 @@ pub struct VirtualMachine<'a> {
 }
 
 impl<'a> VirtualMachine<'a> {
-    pub fn new(chunk: chunk::Chunk, env: &'a Env) -> Self {
+    pub fn new(chunk: Rc<chunk::Chunk>, env: &'a Env) -> Self {
         Self {
             frames: vec![CallFrame {
-                chunk: Rc::new(chunk),
+                chunk,
                 return_ip: 0,
                 base_idx: 0,
             }],
@@ -51,14 +51,18 @@ impl<'a> VirtualMachine<'a> {
     ) -> Result<(), RuntimeError> {
         let rhs = self.stack.pop();
         let lhs = self.stack.pop();
-        println!("eval op {lhs} with {rhs}");
         self.stack.push(f(lhs, rhs)?);
         self.ip += 1;
         Ok(())
     }
 
-    fn eval(&mut self) -> std::result::Result<Value, Spanned<RuntimeError>> {
-        self.eval_inner().map_err(|e| {
+    pub fn eval(&mut self) -> std::result::Result<Value, Spanned<RuntimeError>> {
+        self.run(0)
+    }
+
+    /// Callbacks from native functions reenter the vm with their own `stop_depth`.
+    fn run(&mut self, stop_depth: usize) -> std::result::Result<Value, Spanned<RuntimeError>> {
+        self.eval_inner(stop_depth).map_err(|e| {
             let frame = self
                 .frames
                 .last()
@@ -67,7 +71,7 @@ impl<'a> VirtualMachine<'a> {
         })
     }
 
-    fn eval_inner(&mut self) -> std::result::Result<Value, RuntimeError> {
+    fn eval_inner(&mut self, stop_depth: usize) -> std::result::Result<Value, RuntimeError> {
         loop {
             let frame = self
                 .frames
@@ -245,13 +249,12 @@ impl<'a> VirtualMachine<'a> {
                         Value::Function(calee) => {
                             let args = self.stack.0.split_off(callee_idx + 1);
                             self.stack.pop();
-                            self.stack.push(
-                                calee.call(
-                                    &mut crate::RuntimeEnv::new(self.env),
-                                    crate::Args(args),
-                                )?,
-                            );
+                            let return_value = calee.call(self, crate::Args(args))?;
+                            self.stack.push(return_value);
                             self.ip += 1;
+                        }
+                        Value::Closure(_) => {
+                            panic!("closures created in traverse evaluator can't be called with vm")
                         }
                         Value::VmClosure(closure) => {
                             let base_idx = callee_idx + 1;
@@ -273,14 +276,17 @@ impl<'a> VirtualMachine<'a> {
                 }
                 OpCode::Return => {
                     let frame = self.frames.pop().expect("at least one frame");
+                    let return_value = self.stack.pop();
                     if self.frames.is_empty() {
-                        return Ok(self.stack.pop());
+                        return Ok(return_value);
                     }
 
-                    let return_value = self.stack.pop();
-                    self.stack.0.drain(frame.base_idx - 1..);
-                    self.stack.push(return_value);
+                    self.stack.0.truncate(frame.base_idx - 1);
                     self.ip = frame.return_ip;
+                    if self.frames.len() == stop_depth {
+                        return Ok(return_value);
+                    }
+                    self.stack.push(return_value);
                 }
                 OpCode::LoadLocal { slot } => {
                     self.stack.push(
@@ -294,7 +300,9 @@ impl<'a> VirtualMachine<'a> {
                 }
                 OpCode::LoadCapture { idx } => {
                     let Value::VmClosure(c) = &self.stack.0[frame.base_idx - 1] else {
-                        unreachable!()
+                        unreachable!(
+                            "closure value should live right below the arguments on the stack"
+                        )
                     };
                     self.stack.push(c.captures[idx as usize].clone());
                     self.ip += 1;
@@ -313,6 +321,47 @@ impl<'a> VirtualMachine<'a> {
                     })));
                     self.ip += 1;
                 }
+            }
+        }
+    }
+}
+
+impl ExecutionContext for VirtualMachine<'_> {
+    fn call(
+        &mut self,
+        f: &crate::value::CallableRef,
+        args: crate::Args,
+    ) -> std::result::Result<crate::Value, Spanned<crate::RuntimeError>> {
+        match f {
+            crate::value::CallableRef::Closure(_) => {
+                panic!("calling traverse evaluator closures inside vm is not supported")
+            }
+            crate::value::CallableRef::ExternalFunction(function) => {
+                function.f.call(self, args);
+                todo!()
+            }
+            crate::value::CallableRef::VmClosure(vm_closure) => {
+                // Same stack layout as OpCode::FnCall: closure followed by the arguments
+                let stop_depth = self.frames.len();
+                let return_ip = self.ip;
+                let base_idx = self.stack.len() + 1;
+                self.stack.push(Value::VmClosure(Rc::clone(vm_closure)));
+                self.stack.0.extend(args.0);
+                self.frames.push(CallFrame {
+                    chunk: vm_closure.chunk.clone(),
+                    return_ip,
+                    base_idx,
+                });
+                self.ip = vm_closure.entry_idx;
+
+                let result = self.run(stop_depth);
+                if result.is_err() {
+                    // Unwind the callback so the caller keeps a consistent vm state
+                    self.frames.truncate(stop_depth);
+                    self.stack.0.truncate(base_idx - 1);
+                    self.ip = return_ip;
+                }
+                result
             }
         }
     }
@@ -417,5 +466,33 @@ mod tests {
 
         assert_eq!(ev("(|a, b| a - b)(5, 3)"), 2.into());
         assert_eq!(ev("1 + (|v| v)(2)"), 3.into());
+    }
+
+    #[test]
+    fn external_fns() {
+        assert_eq!(ev("[1, 2, 3] | map(|v| v * 2)"), vec![2, 4, 6].into());
+        assert_eq!(ev("1 + ([1, 2] | map(|v| v) | len)"), 3.into());
+    }
+
+    #[test]
+    fn nested_callbacks() {
+        assert_eq!(
+            ev("[1, 2] | map(|a| [10, 20] | map(|b| a * b))"),
+            Value::Array(Array(vec![vec![10, 20].into(), vec![20, 40].into(),]))
+        );
+        assert_eq!(
+            ev("(|m| [1, 2, 3] | map(|v| v * m))(3)"),
+            vec![3, 6, 9].into()
+        );
+    }
+
+    #[test]
+    fn callback_error_unwinds() {
+        let mut compiler = Compiler::new();
+        compiler.compile(&crate::parser::parse_expr("[1, 2] | map(|v| v * {})").unwrap());
+        let env = crate::Env::std();
+        let mut vm = compiler.into_vm(&env);
+        assert!(vm.eval().is_err());
+        assert_eq!(vm.frames.len(), 1);
     }
 }

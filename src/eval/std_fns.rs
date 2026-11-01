@@ -2,7 +2,7 @@ use std::{collections::HashMap, rc::Rc};
 
 use crate::{
     Callable, RuntimeError, Value,
-    eval::{FunctionCallError, env::RuntimeEnv, fns::Function},
+    eval::{ExecutionContext, FunctionCallError, fns::Function},
     value::{Array, CallableValue, Number, Object, ValueType},
 };
 
@@ -19,7 +19,7 @@ macro_rules! declare_fn {
             ::std::rc::Rc::new($crate::Function {
                 name: ::std::rc::Rc::from($name),
                 help: Some($help),
-                f: Box::new($callable as fn(&mut $crate::RuntimeEnv<'_>, $($arg),*) -> ::std::result::Result<$crate::Value, $crate::RuntimeError>),
+                f: Box::new($callable as fn(&mut dyn $crate::ExecutionContext, $($arg),*) -> ::std::result::Result<$crate::Value, $crate::RuntimeError>),
             }),
         )
     };
@@ -106,7 +106,7 @@ pub fn std_fns() -> HashMap<&'static str, Rc<Function>> {
 }
 
 pub fn clamp(
-    _: &mut RuntimeEnv<'_>,
+    _: &mut dyn ExecutionContext,
     number: Number,
     min: i64,
     max: i64,
@@ -117,7 +117,7 @@ pub fn clamp(
     }))
 }
 
-pub fn sum(_: &mut RuntimeEnv<'_>, elements: Vec<Value>) -> Result<Value, RuntimeError> {
+pub fn sum(_: &mut dyn ExecutionContext, elements: Vec<Value>) -> Result<Value, RuntimeError> {
     Ok(Value::Number(
         elements
             .into_iter()
@@ -129,7 +129,7 @@ pub fn sum(_: &mut RuntimeEnv<'_>, elements: Vec<Value>) -> Result<Value, Runtim
     ))
 }
 
-pub fn max(_: &mut RuntimeEnv<'_>, elements: Vec<Value>) -> Result<Value, RuntimeError> {
+pub fn max(_: &mut dyn ExecutionContext, elements: Vec<Value>) -> Result<Value, RuntimeError> {
     match elements
         .into_iter()
         .filter_map(|v| match v {
@@ -143,7 +143,7 @@ pub fn max(_: &mut RuntimeEnv<'_>, elements: Vec<Value>) -> Result<Value, Runtim
     }
 }
 
-pub fn min(_: &mut RuntimeEnv<'_>, elements: Vec<Value>) -> Result<Value, RuntimeError> {
+pub fn min(_: &mut dyn ExecutionContext, elements: Vec<Value>) -> Result<Value, RuntimeError> {
     match elements
         .into_iter()
         .filter_map(|v| match v {
@@ -158,7 +158,7 @@ pub fn min(_: &mut RuntimeEnv<'_>, elements: Vec<Value>) -> Result<Value, Runtim
 }
 
 pub fn pluck(
-    _: &mut RuntimeEnv<'_>,
+    _: &mut dyn ExecutionContext,
     elements: Vec<Value>,
     key: String,
 ) -> Result<Value, RuntimeError> {
@@ -172,15 +172,15 @@ pub fn pluck(
     Ok(Value::Array(Array(arr)))
 }
 
-pub fn to_uppercase(_: &mut RuntimeEnv<'_>, val: String) -> Result<Value, RuntimeError> {
+pub fn to_uppercase(_: &mut dyn ExecutionContext, val: String) -> Result<Value, RuntimeError> {
     Ok(Value::String(val.to_uppercase()))
 }
 
-pub fn concat(_: &mut RuntimeEnv<'_>, val: Vec<Value>) -> Result<Value, RuntimeError> {
+pub fn concat(_: &mut dyn ExecutionContext, val: Vec<Value>) -> Result<Value, RuntimeError> {
     Ok(val.iter().map(Value::stringify).collect::<String>().into())
 }
 
-pub fn log_10(_: &mut RuntimeEnv<'_>, val: Number) -> Result<Value, RuntimeError> {
+pub fn log_10(_: &mut dyn ExecutionContext, val: Number) -> Result<Value, RuntimeError> {
     Ok(Value::Number(
         match val {
             Number::Float(f) => f,
@@ -191,7 +191,7 @@ pub fn log_10(_: &mut RuntimeEnv<'_>, val: Number) -> Result<Value, RuntimeError
     ))
 }
 
-pub fn cos(_: &mut RuntimeEnv<'_>, val: Number) -> Result<Value, RuntimeError> {
+pub fn cos(_: &mut dyn ExecutionContext, val: Number) -> Result<Value, RuntimeError> {
     Ok(Value::Number(
         match val {
             Number::Float(f) => f,
@@ -202,7 +202,7 @@ pub fn cos(_: &mut RuntimeEnv<'_>, val: Number) -> Result<Value, RuntimeError> {
     ))
 }
 
-pub fn sin(_: &mut RuntimeEnv<'_>, val: Number) -> Result<Value, RuntimeError> {
+pub fn sin(_: &mut dyn ExecutionContext, val: Number) -> Result<Value, RuntimeError> {
     Ok(Value::Number(
         match val {
             Number::Float(f) => f,
@@ -214,7 +214,7 @@ pub fn sin(_: &mut RuntimeEnv<'_>, val: Number) -> Result<Value, RuntimeError> {
 }
 
 pub fn join(
-    _: &mut RuntimeEnv<'_>,
+    _: &mut dyn ExecutionContext,
     val: Vec<Value>,
     separator: String,
 ) -> Result<Value, RuntimeError> {
@@ -233,11 +233,11 @@ pub fn join(
     Ok(Value::String(out))
 }
 
-pub fn trim(_: &mut RuntimeEnv<'_>, val: String) -> Result<Value, RuntimeError> {
+pub fn trim(_: &mut dyn ExecutionContext, val: String) -> Result<Value, RuntimeError> {
     Ok(Value::String(val.trim().to_owned()))
 }
 
-pub fn len(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, RuntimeError> {
+pub fn len(_: &mut dyn ExecutionContext, val: Value) -> Result<Value, RuntimeError> {
     Ok(Value::Number(Number::Int(match val {
         Value::String(s) => s.chars().count(),
         Value::Object(object) => object.len(),
@@ -252,15 +252,15 @@ pub fn len(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, RuntimeError> {
     } as i64)))
 }
 
-pub fn trim_start(_: &mut RuntimeEnv<'_>, val: String) -> Result<Value, RuntimeError> {
+pub fn trim_start(_: &mut dyn ExecutionContext, val: String) -> Result<Value, RuntimeError> {
     Ok(Value::String(val.trim_start().to_owned()))
 }
 
-pub fn trim_end(_: &mut RuntimeEnv<'_>, val: String) -> Result<Value, RuntimeError> {
+pub fn trim_end(_: &mut dyn ExecutionContext, val: String) -> Result<Value, RuntimeError> {
     Ok(Value::String(val.trim_end().to_owned()))
 }
 
-pub fn to_i(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, RuntimeError> {
+pub fn to_i(_: &mut dyn ExecutionContext, val: Value) -> Result<Value, RuntimeError> {
     match val {
         Value::Number(Number::Float(f)) => Ok(Value::Number(Number::Int(f as i64))),
         Value::Number(val @ Number::Int(_)) => Ok(Value::Number(val)),
@@ -286,7 +286,7 @@ pub fn to_i(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, RuntimeError> {
     }
 }
 
-pub fn to_f(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, RuntimeError> {
+pub fn to_f(_: &mut dyn ExecutionContext, val: Value) -> Result<Value, RuntimeError> {
     match val {
         Value::Number(val @ Number::Float(_)) => Ok(Value::Number(val)),
         Value::Number(Number::Int(i)) => Ok(Value::Number(Number::Float(i as f64))),
@@ -312,23 +312,23 @@ pub fn to_f(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, RuntimeError> {
     }
 }
 
-pub fn to_s(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, RuntimeError> {
+pub fn to_s(_: &mut dyn ExecutionContext, val: Value) -> Result<Value, RuntimeError> {
     Ok(Value::String(val.stringify()))
 }
 
-pub fn to_lowercase(_: &mut RuntimeEnv<'_>, val: String) -> Result<Value, RuntimeError> {
+pub fn to_lowercase(_: &mut dyn ExecutionContext, val: String) -> Result<Value, RuntimeError> {
     Ok(Value::String(val.to_lowercase()))
 }
 
-pub fn blank_as_null(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, RuntimeError> {
+pub fn blank_as_null(_: &mut dyn ExecutionContext, val: Value) -> Result<Value, RuntimeError> {
     Ok(if val.blank() { Value::Null } else { val })
 }
 
-pub fn blank_as_void(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, RuntimeError> {
+pub fn blank_as_void(_: &mut dyn ExecutionContext, val: Value) -> Result<Value, RuntimeError> {
     Ok(if val.blank() { Value::Void } else { val })
 }
 
-pub fn void_as_null(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, RuntimeError> {
+pub fn void_as_null(_: &mut dyn ExecutionContext, val: Value) -> Result<Value, RuntimeError> {
     Ok(match val {
         Value::Void => Value::Null,
         _ => val,
@@ -336,7 +336,7 @@ pub fn void_as_null(_: &mut RuntimeEnv<'_>, val: Value) -> Result<Value, Runtime
 }
 
 pub fn map(
-    e: &mut RuntimeEnv<'_>,
+    e: &mut dyn ExecutionContext,
     arr: Vec<Value>,
     f: CallableValue,
 ) -> Result<Value, RuntimeError> {
@@ -348,7 +348,7 @@ pub fn map(
 }
 
 pub fn filter_map(
-    e: &mut RuntimeEnv<'_>,
+    e: &mut dyn ExecutionContext,
     arr: Vec<Value>,
     f: CallableValue,
 ) -> Result<Value, RuntimeError> {
@@ -364,7 +364,7 @@ pub fn filter_map(
 }
 
 pub fn filter(
-    e: &mut RuntimeEnv<'_>,
+    e: &mut dyn ExecutionContext,
     arr: Vec<Value>,
     f: CallableValue,
 ) -> Result<Value, RuntimeError> {
@@ -380,7 +380,7 @@ pub fn filter(
 }
 
 pub fn find(
-    e: &mut RuntimeEnv<'_>,
+    e: &mut dyn ExecutionContext,
     arr: Vec<Value>,
     f: CallableValue,
 ) -> Result<Value, RuntimeError> {
@@ -396,7 +396,7 @@ pub fn find(
 }
 
 pub fn find_map(
-    e: &mut RuntimeEnv<'_>,
+    e: &mut dyn ExecutionContext,
     arr: Vec<Value>,
     f: CallableValue,
 ) -> Result<Value, RuntimeError> {
@@ -412,7 +412,7 @@ pub fn find_map(
 }
 
 pub fn replace_all(
-    _: &mut RuntimeEnv<'_>,
+    _: &mut dyn ExecutionContext,
     input: String,
     needle: String,
     replacement: String,
@@ -423,16 +423,15 @@ pub fn replace_all(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Args, Callable, Env, RuntimeError, eval_str, value::Object};
+    use crate::{
+        Args, Callable, Env, RuntimeError, eval::ExecutionContext, eval_str, value::Object,
+    };
 
     mod scaling {
-        use crate::{
-            eval::{RuntimeError, env::RuntimeEnv},
-            value::Number,
-        };
+        use crate::{eval::{ExecutionContext, RuntimeError}, value::Number};
 
         pub fn scale(
-            _: &mut RuntimeEnv<'_>,
+            _: &mut dyn ExecutionContext,
             v: f64,
             by: u32,
         ) -> Result<crate::Value, RuntimeError> {
@@ -508,7 +507,11 @@ mod tests {
     fn callable_can_be_implemented_from_outside() {
         struct SkipBlank(Box<dyn Callable>);
         impl Callable for SkipBlank {
-            fn call(&self, env: &mut RuntimeEnv<'_>, args: Args) -> Result<Value, RuntimeError> {
+            fn call(
+                &self,
+                env: &mut dyn ExecutionContext,
+                args: Args,
+            ) -> Result<Value, RuntimeError> {
                 if args.0.first().is_some_and(Value::blank) {
                     return Ok(Value::Void);
                 }
@@ -526,7 +529,8 @@ mod tests {
                 name: Rc::from("upper"),
                 help: None,
                 f: Box::new(SkipBlank(Box::new(
-                    to_uppercase as fn(&mut RuntimeEnv<'_>, String) -> Result<Value, RuntimeError>,
+                    to_uppercase
+                        as fn(&mut dyn ExecutionContext, String) -> Result<Value, RuntimeError>,
                 ))),
             }),
         );

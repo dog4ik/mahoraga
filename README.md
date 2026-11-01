@@ -5,7 +5,7 @@ Small WIP expression language
 ## Usage example
 
 ```rust
-fn my_custom_fn(_: &mut mahoraga::RuntimeEnv<'_>, s: String, n: usize) -> Result<mahoraga::Value, mahoraga::RuntimeError> {
+fn my_custom_fn(_: &mut dyn mahoraga::ExecutionContext, s: String, n: usize) -> Result<mahoraga::Value, mahoraga::RuntimeError> {
     Ok(std::iter::repeat_n(s, n).collect::<String>().into())
 }
 

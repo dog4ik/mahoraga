@@ -272,6 +272,7 @@ impl TryFromArgument for super::CallableValue {
         match value {
             Value::Function(function) => Ok(Self::ExternalFunction(function)),
             Value::Closure(closure) => Ok(Self::Closure(closure)),
+            Value::VmClosure(closure) => Ok(Self::VmClosure(closure)),
             _ => Err(ArgConversionError::UnexpectedArgumentType {
                 got: value.value_type(),
                 expected: &[ValueType::Function],

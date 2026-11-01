@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     Function, Punct,
-    eval::{OpError, RuntimeError, closure::Closure},
+    eval::{ExecutionContext, OpError, RuntimeError, closure::Closure},
     parser::fmt_comma_separated,
     vm::closure::VmClosure,
 };
@@ -157,24 +157,77 @@ impl Display for Number {
 pub enum CallableValue {
     Closure(Closure),
     ExternalFunction(Rc<Function>),
+    VmClosure(Rc<VmClosure>),
 }
 
 impl crate::Callable for CallableValue {
     fn call(
         &self,
-        ctx: &mut crate::RuntimeEnv<'_>,
+        ctx: &mut dyn ExecutionContext,
         args: crate::Args,
     ) -> Result<Value, RuntimeError> {
-        match self {
-            CallableValue::Closure(closure) => closure.call(ctx, args).map_err(|e| e.inner),
-            CallableValue::ExternalFunction(function) => function.call(ctx, args),
-        }
+        let reference = CallableRef::from(self);
+        Ok(ctx.call(&reference, args).map_err(|e| e.inner)?)
     }
 
     fn arity(&self) -> usize {
         match self {
             CallableValue::Closure(closure) => closure.args.len(),
             CallableValue::ExternalFunction(function) => function.arity(),
+            CallableValue::VmClosure(closure) => closure.arity as usize,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum CallableRef<'a> {
+    Closure(&'a Closure),
+    ExternalFunction(&'a Rc<Function>),
+    VmClosure(&'a Rc<VmClosure>),
+}
+
+impl<'a> From<&'a CallableValue> for CallableRef<'a> {
+    fn from(v: &'a CallableValue) -> Self {
+        match v {
+            CallableValue::Closure(c) => CallableRef::Closure(c),
+            CallableValue::ExternalFunction(f) => CallableRef::ExternalFunction(f),
+            CallableValue::VmClosure(c) => CallableRef::VmClosure(c),
+        }
+    }
+}
+
+impl<'a> From<&'a Closure> for CallableRef<'a> {
+    fn from(c: &'a Closure) -> Self {
+        CallableRef::Closure(c)
+    }
+}
+
+impl<'a> From<&'a Rc<Function>> for CallableRef<'a> {
+    fn from(f: &'a Rc<Function>) -> Self {
+        CallableRef::ExternalFunction(f)
+    }
+}
+
+impl<'a> From<&'a Rc<VmClosure>> for CallableRef<'a> {
+    fn from(c: &'a Rc<VmClosure>) -> Self {
+        CallableRef::VmClosure(c)
+    }
+}
+
+impl crate::Callable for CallableRef<'_> {
+    fn call(
+        &self,
+        ctx: &mut dyn ExecutionContext,
+        args: crate::Args,
+    ) -> Result<Value, RuntimeError> {
+        Ok(ctx.call(self, args).map_err(|e| e.inner)?)
+    }
+
+    fn arity(&self) -> usize {
+        match self {
+            CallableRef::Closure(closure) => closure.args.len(),
+            CallableRef::ExternalFunction(function) => function.arity(),
+            CallableRef::VmClosure(closure) => closure.arity as usize,
         }
     }
 }

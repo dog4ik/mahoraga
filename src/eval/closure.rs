@@ -2,14 +2,15 @@ use std::rc::Rc;
 
 use crate::{
     Args, Ident, Value,
-    eval::{self, env::RuntimeEnv, stack::StackFrame},
+    eval::{self, ExecutionContext},
     parser::Node,
+    value::CallableRef,
 };
 
 #[derive(Debug, Clone)]
 pub struct Closure {
     pub args: Vec<String>,
-    body: Rc<Node>,
+    pub body: Rc<Node>,
 }
 
 impl PartialEq for Closure {
@@ -26,16 +27,11 @@ impl Closure {
         }
     }
 
-    pub fn call(&self, env: &mut RuntimeEnv<'_>, Args(args): Args) -> eval::Result<Value> {
-        let mut frame = StackFrame::new();
-        let mut args = args.into_iter();
-        for closure_arg in &self.args {
-            let value = args.next().unwrap_or(Value::Void);
-            frame.add(closure_arg, value);
-        }
-        env.stack.push(frame);
-        let res = crate::eval(&self.body, env);
-        env.stack.pop();
-        res
+    pub fn call(&self, env: &mut dyn ExecutionContext, args: Args) -> eval::Result<Value> {
+        Ok(ExecutionContext::call(
+            env,
+            &CallableRef::Closure(self),
+            args,
+        )?)
     }
 }
