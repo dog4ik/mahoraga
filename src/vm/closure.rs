@@ -18,5 +18,7 @@ impl PartialEq for VmClosure {
 
 #[derive(Debug)]
 pub struct ClosureInfo {
-    entry_instruction_idx: usize,
+    pub start_idx: u16,
+    pub captures: u8,
+    pub arity: u8,
 }

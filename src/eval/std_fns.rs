@@ -177,7 +177,11 @@ pub fn to_uppercase(_: &mut dyn ExecutionContext, val: String) -> Result<Value, 
 }
 
 pub fn concat(_: &mut dyn ExecutionContext, val: Vec<Value>) -> Result<Value, RuntimeError> {
-    Ok(val.iter().map(Value::stringify).collect::<String>().into())
+    let mut out = String::new();
+    for val in &val {
+        val.stringify_into(&mut out);
+    }
+    Ok(out.into())
 }
 
 pub fn log_10(_: &mut dyn ExecutionContext, val: Number) -> Result<Value, RuntimeError> {
@@ -219,16 +223,12 @@ pub fn join(
     separator: String,
 ) -> Result<Value, RuntimeError> {
     let mut out = String::new();
-    let len = val.len();
-    if len == 0 {
-        return Ok(Value::String(String::new()));
+    for (i, val) in val.iter().enumerate() {
+        if i > 0 {
+            out += &separator;
+        }
+        val.stringify_into(&mut out);
     }
-    for val in val.iter().map(Value::stringify).take(len - 1) {
-        out += &val;
-        out += &separator;
-    }
-
-    out += &val[len - 1].stringify();
 
     Ok(Value::String(out))
 }
@@ -313,7 +313,7 @@ pub fn to_f(_: &mut dyn ExecutionContext, val: Value) -> Result<Value, RuntimeEr
 }
 
 pub fn to_s(_: &mut dyn ExecutionContext, val: Value) -> Result<Value, RuntimeError> {
-    Ok(Value::String(val.stringify()))
+    Ok(Value::String(val.into_stringified()))
 }
 
 pub fn to_lowercase(_: &mut dyn ExecutionContext, val: String) -> Result<Value, RuntimeError> {
@@ -342,7 +342,7 @@ pub fn map(
 ) -> Result<Value, RuntimeError> {
     Ok(Value::Array(Array(
         arr.into_iter()
-            .map(|v| f.call(e, crate::Args(vec![v])))
+            .map(|v| f.call(e, crate::Args::one(v)))
             .collect::<Result<Vec<_>, _>>()?,
     )))
 }
@@ -354,7 +354,7 @@ pub fn filter_map(
 ) -> Result<Value, RuntimeError> {
     Ok(Value::Array(Array(
         arr.into_iter()
-            .filter_map(|v| match f.call(e, crate::Args(vec![v])) {
+            .filter_map(|v| match f.call(e, crate::Args::one(v)) {
                 Ok(o) if o.truthy() => Some(Ok(o)),
                 Ok(_) => None,
                 Err(e) => Some(Err(e)),
@@ -370,7 +370,7 @@ pub fn filter(
 ) -> Result<Value, RuntimeError> {
     Ok(Value::Array(Array(
         arr.into_iter()
-            .filter_map(|v| match f.call(e, crate::Args(vec![v.clone()])) {
+            .filter_map(|v| match f.call(e, crate::Args::one(v.clone())) {
                 Ok(o) if o.truthy() => Some(Ok(v)),
                 Ok(_) => None,
                 Err(e) => Some(Err(e)),
@@ -386,7 +386,7 @@ pub fn find(
 ) -> Result<Value, RuntimeError> {
     Ok(arr
         .into_iter()
-        .find_map(|v| match f.call(e, crate::Args(vec![v.clone()])) {
+        .find_map(|v| match f.call(e, crate::Args::one(v.clone())) {
             Ok(o) if o.truthy() => Some(Ok(v)),
             Ok(_) => None,
             Err(e) => Some(Err(e)),
@@ -402,7 +402,7 @@ pub fn find_map(
 ) -> Result<Value, RuntimeError> {
     Ok(arr
         .into_iter()
-        .find_map(|v| match f.call(e, crate::Args(vec![v])) {
+        .find_map(|v| match f.call(e, crate::Args::one(v)) {
             Ok(o) if o.truthy() => Some(Ok(o)),
             Ok(_) => None,
             Err(e) => Some(Err(e)),
@@ -428,7 +428,10 @@ mod tests {
     };
 
     mod scaling {
-        use crate::{eval::{ExecutionContext, RuntimeError}, value::Number};
+        use crate::{
+            eval::{ExecutionContext, RuntimeError},
+            value::Number,
+        };
 
         pub fn scale(
             _: &mut dyn ExecutionContext,

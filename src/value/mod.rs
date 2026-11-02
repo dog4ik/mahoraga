@@ -167,7 +167,7 @@ impl crate::Callable for CallableValue {
         args: crate::Args,
     ) -> Result<Value, RuntimeError> {
         let reference = CallableRef::from(self);
-        Ok(ctx.call(&reference, args).map_err(|e| e.inner)?)
+        ctx.call(&reference, args).map_err(|e| e.inner)
     }
 
     fn arity(&self) -> usize {
@@ -179,19 +179,19 @@ impl crate::Callable for CallableValue {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum CallableRef<'a> {
     Closure(&'a Closure),
-    ExternalFunction(&'a Rc<Function>),
-    VmClosure(&'a Rc<VmClosure>),
+    ExternalFunction(Rc<Function>),
+    VmClosure(Rc<VmClosure>),
 }
 
 impl<'a> From<&'a CallableValue> for CallableRef<'a> {
     fn from(v: &'a CallableValue) -> Self {
         match v {
             CallableValue::Closure(c) => CallableRef::Closure(c),
-            CallableValue::ExternalFunction(f) => CallableRef::ExternalFunction(f),
-            CallableValue::VmClosure(c) => CallableRef::VmClosure(c),
+            CallableValue::ExternalFunction(f) => CallableRef::ExternalFunction(f.clone()),
+            CallableValue::VmClosure(c) => CallableRef::VmClosure(c.clone()),
         }
     }
 }
@@ -202,14 +202,14 @@ impl<'a> From<&'a Closure> for CallableRef<'a> {
     }
 }
 
-impl<'a> From<&'a Rc<Function>> for CallableRef<'a> {
-    fn from(f: &'a Rc<Function>) -> Self {
+impl From<Rc<Function>> for CallableRef<'_> {
+    fn from(f: Rc<Function>) -> Self {
         CallableRef::ExternalFunction(f)
     }
 }
 
-impl<'a> From<&'a Rc<VmClosure>> for CallableRef<'a> {
-    fn from(c: &'a Rc<VmClosure>) -> Self {
+impl From<Rc<VmClosure>> for CallableRef<'_> {
+    fn from(c: Rc<VmClosure>) -> Self {
         CallableRef::VmClosure(c)
     }
 }
@@ -220,7 +220,7 @@ impl crate::Callable for CallableRef<'_> {
         ctx: &mut dyn ExecutionContext,
         args: crate::Args,
     ) -> Result<Value, RuntimeError> {
-        Ok(ctx.call(self, args).map_err(|e| e.inner)?)
+        ctx.call(self, args).map_err(|e| e.inner)
     }
 
     fn arity(&self) -> usize {
@@ -320,6 +320,17 @@ impl Value {
                 )));
             }
         })
+    }
+
+    /// Same as [`Value::add`], but reuses the left string buffer when concatenating
+    pub fn add_owned(self, other: &Self) -> Result<Value, RuntimeError> {
+        match (self, other) {
+            (Value::String(mut lhs), Value::String(rhs)) => {
+                lhs.push_str(rhs);
+                Ok(Value::String(lhs))
+            }
+            (lhs, rhs) => lhs.add(rhs),
+        }
     }
 
     pub fn sub(&self, other: &Self) -> Result<Value, RuntimeError> {
@@ -488,11 +499,26 @@ impl Value {
     ///
     /// Values that can't be useful in string conversion are ignored
     pub fn stringify(&self) -> String {
+        let mut out = String::new();
+        self.stringify_into(&mut out);
+        out
+    }
+
+    /// Same as [`Value::stringify`], but moves the string out instead of copying it
+    pub fn into_stringified(self) -> String {
         match self {
-            Value::String(v) => v.clone(),
-            Value::Number(n) => n.to_string(),
-            Value::Bool(b) => b.to_string(),
-            _ => String::new(),
+            Value::String(v) => v,
+            rest => rest.stringify(),
+        }
+    }
+
+    /// Same as [`Value::stringify`], but appends to an existing buffer
+    pub fn stringify_into(&self, out: &mut String) {
+        match self {
+            Value::String(v) => out.push_str(v),
+            Value::Number(n) => write!(out, "{n}").expect("writing to a string never fails"),
+            Value::Bool(b) => write!(out, "{b}").expect("writing to a string never fails"),
+            _ => {}
         }
     }
 }

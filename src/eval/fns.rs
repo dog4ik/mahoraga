@@ -3,16 +3,16 @@ use std::{
     rc::Rc,
 };
 
-use crate::{
-    RuntimeError, Value,
-    eval::{ExecutionContext, FunctionCallError},
-};
+use crate::{RuntimeError, Value, eval::ExecutionContext};
 
 /// Native function input arguments value list
 #[derive(Debug)]
 pub struct Args(pub Vec<Value>);
 
 impl Args {
+    pub fn one(v: Value) -> Self {
+        Self(vec![v])
+    }
     pub fn len(&self) -> usize {
         self.0.len()
     }

@@ -1,4 +1,4 @@
-use mahoraga::{Env, Value, parse_expr, traverse::RuntimeEnv};
+use mahoraga::{Env, Value, parse_expr, traverse::TraverseRuntime};
 fn main() {
     divan::main();
 }
@@ -11,7 +11,7 @@ enum Executor {
 
 use divan::{Bencher, black_box};
 
-#[divan::bench(args = [Executor::Vm, Executor::Traverse], sample_size = 1000, sample_count = 100)]
+#[divan::bench(args = [Executor::Vm, Executor::Traverse], sample_size = 100, sample_count = 100)]
 fn basic_eval(bencher: Bencher, executor: Executor) {
     let mut env = Env::std();
     env.runtime_objects.0.insert(
@@ -31,7 +31,9 @@ fn basic_eval(bencher: Bencher, executor: Executor) {
         }
         Executor::Traverse => bencher
             // fresh RuntimeEnv per iteration, built outside the timed region
-            .with_inputs(|| RuntimeEnv::new(&env))
-            .bench_local_refs(|rt| mahoraga::traverse::eval(black_box(&node), rt).unwrap()),
+            .with_inputs(|| TraverseRuntime::new(&env, node.span))
+            .bench_local_refs(|rt| {
+                rt.eval(black_box(&node)).unwrap();
+            }),
     }
 }

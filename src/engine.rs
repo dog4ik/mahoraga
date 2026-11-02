@@ -1,5 +1,8 @@
 use crate::{
-    Env, Value, eval::traverse::eval, parse_expr, parser::Node, traverse::RuntimeEnv, value::{Array, Object, ValueType},
+    Env, Value, parse_expr,
+    parser::Node,
+    traverse::TraverseRuntime,
+    value::{Array, Object, ValueType},
 };
 
 #[derive(Debug, thiserror::Error, PartialEq)]
@@ -93,7 +96,8 @@ impl Engine {
 
     /// Evaluates an already parsed expression.
     pub fn eval(&self, node: &Node) -> crate::Result<Value> {
-        Ok(eval(node, &mut RuntimeEnv::new(&self.env))?)
+        let mut runtime = TraverseRuntime::new(&self.env, node.span);
+        Ok(runtime.eval(node)?)
     }
 
     pub fn eval_str(&self, s: &str) -> crate::Result<Value> {

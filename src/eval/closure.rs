@@ -9,7 +9,8 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct Closure {
-    pub args: Vec<String>,
+    /// Shared so that calls can bind arguments without allocating their names
+    pub args: Rc<[Rc<str>]>,
     pub body: Rc<Node>,
 }
 
@@ -20,18 +21,14 @@ impl PartialEq for Closure {
 }
 
 impl Closure {
-    pub fn new(args: Vec<Ident>, node: Rc<Node>) -> Self {
+    pub fn new(args: &[Ident], node: Rc<Node>) -> Self {
         Self {
-            args: args.into_iter().map(|Ident(i)| i).collect(),
+            args: args.iter().map(|Ident(i)| Rc::from(i.as_str())).collect(),
             body: node,
         }
     }
 
     pub fn call(&self, env: &mut dyn ExecutionContext, args: Args) -> eval::Result<Value> {
-        Ok(ExecutionContext::call(
-            env,
-            &CallableRef::Closure(self),
-            args,
-        )?)
+        ExecutionContext::call(env, &CallableRef::Closure(self), args)
     }
 }

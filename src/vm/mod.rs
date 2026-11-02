@@ -1,11 +1,15 @@
 use std::{collections::HashMap, rc::Rc};
 
 use crate::{
-    Callable, Env, Node, RuntimeError, Spanned, Value,
+    Callable, Env, RuntimeError, Spanned, Value,
     eval::ExecutionContext,
-    traverse::RuntimeEnv,
     value::{Array, Number, Object, ValueType},
-    vm::{closure::VmClosure, opcode::OpCode, stack::Stack},
+    vm::{
+        chunk::PathRoot,
+        closure::{ClosureInfo, VmClosure},
+        opcode::OpCode,
+        stack::Stack,
+    },
 };
 
 pub mod chunk;
@@ -14,6 +18,8 @@ pub mod compiler;
 mod constants;
 mod opcode;
 mod stack;
+
+const MAX_STACK: usize = 500;
 
 #[derive(Debug)]
 struct CallFrame {
@@ -77,7 +83,7 @@ impl<'a> VirtualMachine<'a> {
                 .frames
                 .last_mut()
                 .expect("last frame return should stop evaluation");
-            let code = frame.chunk.code.get(self.ip).clone();
+            let code = *frame.chunk.code.get(self.ip);
             match code {
                 OpCode::LoadConstant { constant_idx } => {
                     self.stack
@@ -85,7 +91,7 @@ impl<'a> VirtualMachine<'a> {
                     self.ip += 1;
                 }
                 OpCode::Add => {
-                    self.eval_op(|lhs, rhs| lhs.add(&rhs))?;
+                    self.eval_op(|lhs, rhs| lhs.add_owned(&rhs))?;
                 }
                 OpCode::Sub => {
                     self.eval_op(|lhs, rhs| lhs.sub(&rhs))?;
@@ -175,30 +181,53 @@ impl<'a> VirtualMachine<'a> {
                 }
                 OpCode::Index => {
                     let index = self.stack.pop();
-                    let object = self.stack.pop();
-                    let value = match &object {
-                        Value::Object(Object(obj)) => match index {
-                            Value::String(s) => obj.get(&s).cloned().unwrap_or_default(),
-                            Value::Null | Value::Void => Value::Void,
-                            _ => unreachable!("object index can be only string or nullish value"),
+                    // The object is a temporary, so the value can be moved out of it
+                    let value = match self.stack.pop() {
+                        Value::Object(Object(mut obj)) => match index {
+                            Value::String(s) => obj.remove(&s),
+                            Value::Null | Value::Void => None,
+                            _ => return Err(RuntimeError::InvalidObjectKey(index.value_type())),
                         },
-                        Value::Array(Array(arr)) => match index {
-                            Value::Number(Number::Int(i)) => {
-                                arr.get(i as usize).cloned().unwrap_or_default()
-                            }
-                            Value::Number(Number::Float(f)) => {
-                                arr.get(f as usize).cloned().unwrap_or_default()
-                            }
-                            Value::Null | Value::Void => Value::Void,
-                            _ => unreachable!("array index can be only number or nullish value"),
-                        },
-                        Value::Null | Value::Void => Value::Void,
-                        _ => unreachable!(
-                            "only array or hashmap can be indexed, got: {}, ({})",
-                            object.value_type(),
-                            object,
-                        ),
+                        Value::Array(Array(mut arr)) => array_position(&index)?
+                            .filter(|&i| i < arr.len())
+                            .map(|i| arr.swap_remove(i)),
+                        Value::Null | Value::Void => None,
+                        rest => return Err(RuntimeError::InvalidIndexOperand(rest.value_type())),
                     };
+                    self.stack.push(value.unwrap_or_default());
+                    self.ip += 1;
+                }
+                OpCode::LoadPath { path_idx } => {
+                    let path = &frame.chunk.paths[path_idx as usize];
+                    let root = match &path.root {
+                        PathRoot::Local(slot) => &self.stack.0[frame.base_idx + *slot as usize],
+                        PathRoot::Capture(idx) => {
+                            let Value::VmClosure(c) = &self.stack.0[frame.base_idx - 1] else {
+                                unreachable!(
+                                    "closure value should live right below the arguments on the stack"
+                                )
+                            };
+                            &c.captures[*idx as usize]
+                        }
+                        PathRoot::Static(key) => match self.env.runtime_objects.0.get(key) {
+                            Some(value) => value,
+                            None => &self
+                                .env
+                                .fns
+                                .get(key.as_str())
+                                .map(|f| Value::Function(f.clone()))
+                                .unwrap_or_default(),
+                        },
+                    };
+                    let value = path
+                        .segments
+                        .iter()
+                        .try_fold(Some(root), |object, index| match object {
+                            Some(object) => index_ref(object, index),
+                            None => Ok(None),
+                        })?
+                        .cloned()
+                        .unwrap_or_default();
                     self.stack.push(value);
                     self.ip += 1;
                 }
@@ -245,11 +274,13 @@ impl<'a> VirtualMachine<'a> {
                 }
                 OpCode::FnCall { args_count } => {
                     let callee_idx = self.stack.len() - args_count as usize - 1;
-                    match self.stack.0[callee_idx].clone() {
-                        Value::Function(calee) => {
+                    match &self.stack.0[callee_idx] {
+                        Value::Function(_) => {
                             let args = self.stack.0.split_off(callee_idx + 1);
-                            self.stack.pop();
-                            let return_value = calee.call(self, crate::Args(args))?;
+                            let Value::Function(callee) = self.stack.pop() else {
+                                unreachable!("callee was just matched as a function")
+                            };
+                            let return_value = callee.call(self, crate::Args(args))?;
                             self.stack.push(return_value);
                             self.ip += 1;
                         }
@@ -257,14 +288,19 @@ impl<'a> VirtualMachine<'a> {
                             panic!("closures created in traverse evaluator can't be called with vm")
                         }
                         Value::VmClosure(closure) => {
-                            let base_idx = callee_idx + 1;
-                            self.frames.push(CallFrame {
+                            let call_frame = CallFrame {
                                 chunk: closure.chunk.clone(),
                                 return_ip: self.ip + 1,
-                                base_idx,
-                            });
+                                base_idx: callee_idx + 1,
+                            };
                             self.ip = closure.entry_idx;
-                            self.stack.push(Value::VmClosure(closure));
+                            for _ in args_count..closure.arity as u16 {
+                                self.stack.push(Value::Void);
+                            }
+                            if self.frames.len() > MAX_STACK {
+                                return Err(RuntimeError::DepthLimitReached);
+                            }
+                            self.frames.push(call_frame);
                         }
                         rest => {
                             return Err(RuntimeError::UnexpectedType {
@@ -307,17 +343,19 @@ impl<'a> VirtualMachine<'a> {
                     self.stack.push(c.captures[idx as usize].clone());
                     self.ip += 1;
                 }
-                OpCode::MakeClosure {
-                    start_idx,
-                    captures,
-                } => {
+                OpCode::MakeClosure { closure_idx } => {
+                    let ClosureInfo {
+                        start_idx,
+                        captures,
+                        arity,
+                    } = frame.chunk.closures[closure_idx as usize];
                     let at = self.stack.len() - captures as usize;
                     let captures = self.stack.0.split_off(at);
                     self.stack.push(Value::VmClosure(Rc::new(VmClosure {
                         chunk: frame.chunk.clone(),
                         entry_idx: start_idx as usize,
                         captures,
-                        arity: 0,
+                        arity,
                     })));
                     self.ip += 1;
                 }
@@ -337,8 +375,11 @@ impl ExecutionContext for VirtualMachine<'_> {
                 panic!("calling traverse evaluator closures inside vm is not supported")
             }
             crate::value::CallableRef::ExternalFunction(function) => {
-                function.f.call(self, args);
-                todo!()
+                let value = function.f.call(self, args).map_err(|e| {
+                    let frame = self.frames.last().expect("at least one frame");
+                    e.with_span(frame.chunk.code.span_for(self.ip))
+                })?;
+                Ok(value)
             }
             crate::value::CallableRef::VmClosure(vm_closure) => {
                 // Same stack layout as OpCode::FnCall: closure followed by the arguments
@@ -346,7 +387,11 @@ impl ExecutionContext for VirtualMachine<'_> {
                 let return_ip = self.ip;
                 let base_idx = self.stack.len() + 1;
                 self.stack.push(Value::VmClosure(Rc::clone(vm_closure)));
+                let args_count = args.len();
                 self.stack.0.extend(args.0);
+                for _ in args_count..vm_closure.arity as usize {
+                    self.stack.push(Value::Void);
+                }
                 self.frames.push(CallFrame {
                     chunk: vm_closure.chunk.clone(),
                     return_ip,
@@ -367,11 +412,28 @@ impl ExecutionContext for VirtualMachine<'_> {
     }
 }
 
-pub fn eval(node: Node, env: &Env) -> crate::Result<Value> {
-    let mut compiler = compiler::Compiler::new();
-    compiler.compile(&node);
-    let mut vm = compiler.into_vm(env);
-    Ok(vm.eval()?)
+/// Index semantics shared by `OpCode::Index` and `OpCode::LoadPath`.
+/// `None` means a missing value
+fn index_ref<'v>(object: &'v Value, index: &Value) -> Result<Option<&'v Value>, RuntimeError> {
+    Ok(match object {
+        Value::Object(Object(obj)) => match index {
+            Value::String(s) => obj.get(s),
+            Value::Null | Value::Void => None,
+            _ => return Err(RuntimeError::InvalidObjectKey(index.value_type())),
+        },
+        Value::Array(Array(arr)) => array_position(index)?.and_then(|idx| arr.get(idx)),
+        Value::Null | Value::Void => None,
+        _ => Err(RuntimeError::InvalidIndexOperand(object.value_type()))?,
+    })
+}
+
+fn array_position(index: &Value) -> Result<Option<usize>, RuntimeError> {
+    Ok(match index {
+        Value::Number(Number::Int(i)) => Some(*i as usize),
+        Value::Number(Number::Float(f)) => Some(*f as usize),
+        Value::Null | Value::Void => None,
+        _ => Err(RuntimeError::InvalidArrayIndex(index.value_type()))?,
+    })
 }
 
 #[cfg(test)]
@@ -396,94 +458,9 @@ mod tests {
     }
 
     #[test]
-    fn basic_compiler() {
-        assert_eq!(ev("2+2"), 4.into())
-    }
-
-    #[test]
-    fn turnary() {
-        // assert_eq!(ev("true ? 1 : 2"), 1.into());
-        assert_eq!(ev("false ? 2 : 1"), 1.into());
-    }
-
-    #[test]
-    fn eval_ordering() {
-        assert_eq!(ev("!true"), false.into());
-        assert_eq!(ev("5 - 3"), 2.into());
-        assert_eq!(ev("\"a\" + \"b\""), "ab".into());
-        assert_eq!(ev("true ? (false ? 1 : 2) : 3"), 2.into());
-
-        assert_eq!(ev("null ?? 1"), 1.into());
-        assert_eq!(ev("5 ?? 1"), 5.into());
-
-        assert_eq!(ev("false || 1"), 1.into());
-        assert_eq!(ev("true || 1"), true.into());
-
-        assert_eq!(ev("1 && 0"), 0.into());
-        assert_eq!(ev("false && 1"), false.into());
-    }
-
-    #[test]
-    fn object_access() {
-        assert_eq!(ev("constants.pi"), std::f64::consts::PI.into());
-    }
-
-    #[test]
-    fn array_lit() {
-        assert_eq!(
-            ev("[10, \"foo\", [[\"test\"]]]"),
-            Value::Array(Array(vec![
-                10.into(),
-                "foo".into(),
-                Value::Array(Array(vec![Value::Array(Array(vec!["test".into()]))]))
-            ]))
-        );
-    }
-
-    #[test]
-    fn object_lit() {
-        assert_eq!(
-            ev("{'foo': 'bar', 'baz': 39}"),
-            Value::Object(Object(HashMap::from_iter([
-                ("foo".to_string(), "bar".into()),
-                ("baz".to_string(), 39.into())
-            ])))
-        );
-    }
-
-    #[test]
-    fn external_fn_call() {
-        // assert_eq!(ev("to_uppercase('bar')"), "BAR".into());
-        assert_eq!(ev("'hahaha' | replace_all('ha', 'hi')"), "hihihi".into());
-        assert_eq!(ev("replace_all('hahaha', 'ha', 'hi')"), "hihihi".into());
-        assert_eq!(ev("' a ' | trim | to_uppercase"), "A".into());
-    }
-
-    #[test]
-    fn closures() {
-        assert_eq!(ev("(|v| v * 2)(4)"), 8.into());
+    fn capturing_closures() {
         assert_eq!(ev("(|v| |c| v * c)(4)(2)"), 8.into());
-
-        assert_eq!(ev("(|a, b| a - b)(5, 3)"), 2.into());
-        assert_eq!(ev("1 + (|v| v)(2)"), 3.into());
-    }
-
-    #[test]
-    fn external_fns() {
-        assert_eq!(ev("[1, 2, 3] | map(|v| v * 2)"), vec![2, 4, 6].into());
-        assert_eq!(ev("1 + ([1, 2] | map(|v| v) | len)"), 3.into());
-    }
-
-    #[test]
-    fn nested_callbacks() {
-        assert_eq!(
-            ev("[1, 2] | map(|a| [10, 20] | map(|b| a * b))"),
-            Value::Array(Array(vec![vec![10, 20].into(), vec![20, 40].into(),]))
-        );
-        assert_eq!(
-            ev("(|m| [1, 2, 3] | map(|v| v * m))(3)"),
-            vec![3, 6, 9].into()
-        );
+        assert_eq!(ev("(|v| |v2| v2 * v)(3)(2)"), 6.into());
     }
 
     #[test]

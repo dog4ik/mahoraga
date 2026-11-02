@@ -1,6 +1,6 @@
 use crate::Span;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum OpCode {
     LoadConstant {
         constant_idx: u16,
@@ -52,8 +52,12 @@ pub enum OpCode {
         args_count: u16,
     },
     MakeClosure {
-        start_idx: u16,
-        captures: u8,
+        closure_idx: u16,
+    },
+    /// Load the final value of a member/index chain stored in `Chunk::paths`
+    /// without copying its intermediate values
+    LoadPath {
+        path_idx: u16,
     },
     LoadLocal {
         slot: u16,

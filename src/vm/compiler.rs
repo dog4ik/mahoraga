@@ -5,24 +5,20 @@ use crate::{
     value::ValueType,
     vm::{
         VirtualMachine,
-        chunk::Chunk,
+        chunk::{AccessPath, Chunk, PathRoot},
+        closure::ClosureInfo,
         constants::ConstantsPool,
-        opcode::{Instructions, OpCode},
+        opcode::OpCode,
     },
 };
 
 #[derive(Debug, thiserror::Error)]
+#[allow(unused)]
 pub enum CompilerError {
     #[error("uncallable type {got}")]
     UncallableType { got: ValueType },
     #[error("reached max expression depth limit")]
     ExpressionDepthLimit,
-}
-
-#[derive(Debug)]
-pub struct CompiledFn {
-    code: Instructions,
-    constants: ConstantsPool,
 }
 
 #[derive(Debug)]
@@ -118,7 +114,7 @@ impl Compiler {
         let closure_start = self.chunk.code.len();
         self.scopes.push(FnScope {
             captures: Vec::new(),
-            arg_names: args.into_iter().map(|Ident(i)| i.to_string()).collect(),
+            arg_names: args.iter().map(|Ident(i)| i.to_string()).collect(),
         });
         self.compile_inner(body);
         let scope = self.scopes.pop().expect("scope was just pushed");
@@ -136,13 +132,52 @@ impl Compiler {
             );
         }
 
-        self.chunk.emit(
-            OpCode::MakeClosure {
-                start_idx: closure_start as u16,
-                captures: scope.captures.len() as u8,
-            },
-            span,
-        );
+        let closure_idx = self.chunk.add_closure(ClosureInfo {
+            start_idx: closure_start as u16,
+            captures: scope.captures.len() as u8,
+            arity: args.len() as u8,
+        });
+        self.chunk.emit(OpCode::MakeClosure { closure_idx }, span);
+    }
+
+    fn compile_path(&mut self, node: &Node) -> bool {
+        let mut segments = Vec::new();
+        let mut current = node;
+        let root = loop {
+            match &current.kind {
+                NodeKind::Member { object, field, .. } => {
+                    segments.push(Value::String(field.0.clone()));
+                    current = object;
+                }
+                NodeKind::Index { object, index } => {
+                    let segment = match &index.kind {
+                        NodeKind::Atom(Atom::StrLit(s)) => Value::String(s.clone()),
+                        NodeKind::Atom(Atom::IntLit(i)) => Value::Number((*i).into()),
+                        NodeKind::Atom(Atom::FloatLit(f)) => Value::Number((*f).into()),
+                        NodeKind::Atom(Atom::NullLit) => Value::Null,
+                        NodeKind::Atom(Atom::VoidLit) => Value::Void,
+                        _ => return false,
+                    };
+                    segments.push(segment);
+                    current = object;
+                }
+                NodeKind::Atom(Atom::Ident(ident)) => break ident,
+                _ => return false,
+            }
+        };
+        if segments.is_empty() {
+            return false;
+        }
+        segments.reverse();
+
+        let root = match self.resolve_ident(self.scopes.len() - 1, root) {
+            Some(Access::Local(slot)) => PathRoot::Local(slot),
+            Some(Access::Capture(idx)) => PathRoot::Capture(idx),
+            None => PathRoot::Static(root.0.clone()),
+        };
+        let path_idx = self.chunk.add_path(AccessPath { root, segments });
+        self.chunk.emit(OpCode::LoadPath { path_idx }, node.span);
+        true
     }
 
     fn compile_identifier(&mut self, ident: &Ident, span: Span) {
@@ -241,6 +276,7 @@ impl Compiler {
                 self.compile_inner(false_node);
                 self.chunk.patch_jump(jump_over_false);
             }
+            NodeKind::Member { .. } | NodeKind::Index { .. } if self.compile_path(node) => {}
             NodeKind::Member {
                 object,
                 field,

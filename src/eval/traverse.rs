@@ -1,13 +1,16 @@
-use std::{iter::Rev, slice};
+use std::{iter::Rev, rc::Rc, slice};
 
 use super::Result;
 use crate::{
-    Args, Atom, Callable, Env, FunctionCallError, Ident, Node, NodeKind, Punct, RuntimeError, Span, Spanned, Value, eval::{ExecutionContext, closure::Closure}, value::{Array, Number, Object, ValueType},
+    Args, Atom, Callable, Env, FunctionCallError, Ident, Node, NodeKind, Punct, RuntimeError, Span,
+    Spanned, Value,
+    eval::{ExecutionContext, closure::Closure},
+    value::{Array, Number, Object, ValueType},
 };
 
 #[derive(Debug)]
 pub struct StackFrame {
-    scope: Vec<(String, Value)>,
+    scope: Vec<(Rc<str>, Value)>,
 }
 
 impl StackFrame {
@@ -16,11 +19,20 @@ impl StackFrame {
     }
 
     pub fn get(&self, name: &str) -> Option<&Value> {
-        self.scope.iter().find(|(k, _)| k == name).map(|(_, v)| v)
+        self.scope
+            .iter()
+            .find(|(k, _)| k.as_ref() == name)
+            .map(|(_, v)| v)
     }
 
-    pub fn add(&mut self, name: impl Into<String>, value: Value) {
-        self.scope.push((name.into(), value));
+    pub fn add(&mut self, name: Rc<str>, value: Value) {
+        self.scope.push((name, value));
+    }
+}
+
+impl Default for StackFrame {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -68,22 +80,24 @@ impl Stack {
 }
 
 /// Mutable variable scope used at runtime
-pub struct RuntimeEnv<'a> {
+pub struct TraverseRuntime<'a> {
     pub env: &'a Env,
     pub current_depth: usize,
+    pub current_span: Span,
     pub stack: Stack,
 }
 
-impl RuntimeEnv<'_> {
-    pub fn new(env: &Env) -> RuntimeEnv<'_> {
-        RuntimeEnv {
+impl<'a> TraverseRuntime<'a> {
+    pub fn new(env: &'a Env, start_span: Span) -> TraverseRuntime<'a> {
+        TraverseRuntime {
             env,
             current_depth: 0,
+            current_span: start_span,
             stack: Stack::new(),
         }
     }
 
-    pub fn lookup_value(&self, name: &str) -> Option<&Value> {
+    pub fn lookup_value(&'a self, name: &str) -> Option<&'a Value> {
         self.stack
             .into_iter()
             .find_map(|frame| frame.get(name))
@@ -91,7 +105,7 @@ impl RuntimeEnv<'_> {
     }
 }
 
-impl ExecutionContext for RuntimeEnv<'_> {
+impl ExecutionContext for TraverseRuntime<'_> {
     fn call(
         &mut self,
         f: &crate::value::CallableRef,
@@ -101,19 +115,21 @@ impl ExecutionContext for RuntimeEnv<'_> {
             crate::value::CallableRef::Closure(closure) => {
                 let mut frame = StackFrame::new();
                 let mut args = args.0.into_iter();
-                for closure_arg in &closure.args {
+                for closure_arg in closure.args.iter() {
                     let value = args.next().unwrap_or(Value::Void);
-                    frame.add(closure_arg, value);
+                    frame.add(closure_arg.clone(), value);
                 }
                 self.stack.push(frame);
-                let res = crate::traverse::eval(&closure.body, self);
+                let res = self.eval(&closure.body);
                 self.stack.pop();
                 res
             }
             crate::value::CallableRef::ExternalFunction(function) => {
-                function.call(self, args);
-                todo!()
-            },
+                let value = function
+                    .call(self, args)
+                    .map_err(|e| e.with_span(self.current_span))?;
+                Ok(value)
+            }
             crate::value::CallableRef::VmClosure(_) => {
                 panic!("calling vm closures during traverse evaluation is not supported")
             }
@@ -121,7 +137,7 @@ impl ExecutionContext for RuntimeEnv<'_> {
     }
 }
 
-impl<'a> RuntimeEnv<'a> {
+impl<'a> TraverseRuntime<'a> {
     fn eval_punct_node(
         &mut self,
         lhs: &Node,
@@ -237,8 +253,9 @@ impl<'a> RuntimeEnv<'a> {
         }
     }
 
-    fn eval(&mut self, Node { span, kind }: &Node) -> Result<Value> {
+    pub fn eval(&mut self, Node { span, kind }: &Node) -> Result<Value> {
         self.current_depth += 1;
+        self.current_span = *span;
         if self.current_depth >= super::MAX_DEPTH {
             return Err(Spanned::new(RuntimeError::DepthLimitReached, *span));
         }
@@ -272,7 +289,11 @@ impl<'a> RuntimeEnv<'a> {
                 match index_target {
                     Value::Object(object) => self.eval_object_index(&object, index),
                     Value::Array(array) => self.eval_array_index(&array, index),
-                    _ => Err(Spanned::new(RuntimeError::InvalidIndexOperand, index.span)),
+                    Value::Void | Value::Null => Ok(Value::Void),
+                    _ => Err(Spanned::new(
+                        RuntimeError::InvalidIndexOperand(index_target.value_type()),
+                        index.span,
+                    )),
                 }
             }
             NodeKind::Member {
@@ -286,7 +307,10 @@ impl<'a> RuntimeEnv<'a> {
                         Ok(obj.get(field).cloned().unwrap_or(Value::Void))
                     }
                     Value::Null | Value::Void => Ok(Value::Void),
-                    _ => Err(Spanned::new(RuntimeError::InvalidIndexOperand, object.span)),
+                    _ => Err(Spanned::new(
+                        RuntimeError::InvalidIndexOperand(object_value.value_type()),
+                        object.span,
+                    )),
                 }
             }
             NodeKind::Call { callee, args } => {
@@ -314,7 +338,7 @@ impl<'a> RuntimeEnv<'a> {
             }
 
             NodeKind::Closure { args, body } => {
-                let closure = Closure::new(args.clone(), body.clone());
+                let closure = Closure::new(args, body.clone());
                 Ok(Value::Closure(closure))
             }
         };
@@ -323,12 +347,8 @@ impl<'a> RuntimeEnv<'a> {
     }
 }
 
-pub fn eval(node: &Node, scope: &mut RuntimeEnv<'_>) -> Result<Value> {
-    scope.eval(node)
-}
-
 fn call_value(
-    env: &mut RuntimeEnv<'_>,
+    env: &mut TraverseRuntime<'_>,
     callee: Value,
     args: Args,
     name: Option<&str>,
