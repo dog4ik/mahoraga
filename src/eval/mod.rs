@@ -146,7 +146,15 @@ mod tests {
         }
         let mut runtime = TraverseRuntime::new(&env, node.span);
         let traverse_result = runtime.eval(&node);
-        let vm_result = bytecode::eval_chunk(bytecode::compile(&node), &env);
+        let mut vm = crate::vm::VirtualMachine::new(bytecode::compile(&node), &env);
+        let vm_result: crate::Result<Value> = vm.eval().map_err(Into::into);
+        if vm_result.is_ok() {
+            assert!(
+                vm.stack_values().is_empty(),
+                "vm stack must be empty after eval finished, got {:?}",
+                vm.stack_values(),
+            );
+        }
         match (&vm_result, &traverse_result) {
             (Ok(vm), Ok(traverse)) => {
                 assert_eq!(vm, traverse, "vm and traverse values must be the same");

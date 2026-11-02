@@ -51,6 +51,11 @@ impl<'a> VirtualMachine<'a> {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn stack_values(&self) -> &[Value] {
+        &self.stack.0
+    }
+
     fn eval_op(
         &mut self,
         f: impl Fn(Value, Value) -> Result<Value, RuntimeError>,
