@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 use crate::{
     Args, Ident, Value,
@@ -11,7 +11,7 @@ use crate::{
 pub struct Closure {
     /// Shared so that calls can bind arguments without allocating their names
     pub args: Rc<[Rc<str>]>,
-    pub body: Rc<Node>,
+    pub body: Arc<Node>,
 }
 
 impl PartialEq for Closure {
@@ -21,7 +21,7 @@ impl PartialEq for Closure {
 }
 
 impl Closure {
-    pub fn new(args: &[Ident], node: Rc<Node>) -> Self {
+    pub fn new(args: &[Ident], node: Arc<Node>) -> Self {
         Self {
             args: args.iter().map(|Ident(i)| Rc::from(i.as_str())).collect(),
             body: node,

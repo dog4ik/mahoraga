@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     fmt::{Display, Write},
-    rc::Rc,
+    sync::Arc,
 };
 
 use crate::{
@@ -170,7 +170,7 @@ pub enum NodeKind {
     /// Closure: `|a, b| a + b`
     Closure {
         args: Vec<Ident>,
-        body: Rc<Node>,
+        body: Arc<Node>,
     },
     /// Non null builtin assert operator: `object!`
     NonNullishAssertion(Box<Node>),
@@ -340,7 +340,7 @@ impl Parser {
         Ok((
             NodeKind::Closure {
                 args,
-                body: Rc::new(body),
+                body: Arc::new(body),
             },
             span,
         ))
@@ -422,7 +422,7 @@ impl Parser {
                 Node {
                     kind: NodeKind::Closure {
                         args: Vec::new(),
-                        body: Rc::new(body),
+                        body: Arc::new(body),
                     },
                     span: start_span.merge(body_span),
                 }
@@ -1232,7 +1232,7 @@ mod tests {
                 span: Span::new(0..8),
                 kind: NodeKind::Closure {
                     args: vec![Ident("a".into()), Ident("b".into()).into()],
-                    body: Rc::new(Node {
+                    body: Arc::new(Node {
                         span: Span::new(7..8),
                         kind: NodeKind::Atom(5.into())
                     })
@@ -1250,7 +1250,7 @@ mod tests {
                 span: Span::new(0..8),
                 kind: NodeKind::Closure {
                     args: vec![],
-                    body: Rc::new(op(Punct::Add, atom(2, 3..4), atom(2, 7..8), 3..8))
+                    body: Arc::new(op(Punct::Add, atom(2, 3..4), atom(2, 7..8), 3..8))
                 },
             }
         );
