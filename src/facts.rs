@@ -68,101 +68,125 @@ impl Facts {
     }
 }
 
-pub fn collect_facts(node: &Node, out: &mut Facts) {
-    if let Some(path) = static_path(node) {
-        out.paths.push(path);
-        return;
-    }
-    match &node.kind {
-        NodeKind::Op((Punct::Pipe, (input, call))) => {
-            collect_facts(input, out);
-            match &call.kind {
-                NodeKind::Atom(Atom::Ident(Ident(name))) => collect_call(name, call.span, &[], out),
-                NodeKind::Call { callee, args } => collect_callee(callee, args, out),
-                _ => collect_facts(call, out),
-            }
-        }
-        NodeKind::Op((Punct::Coalesce | Punct::Or | Punct::And, (lhs, rhs))) => {
-            collect_facts(lhs, out);
-            collect_facts(rhs, out);
-        }
-        NodeKind::Op((_, (lhs, rhs))) => {
-            collect_facts(lhs, out);
-            collect_facts(rhs, out);
-        }
-        NodeKind::Turnary {
-            operand,
-            truth_node,
-            false_node,
-        } => {
-            collect_facts(operand, out);
-            collect_facts(truth_node, out);
-            collect_facts(false_node, out);
-        }
-        NodeKind::Member { object, .. }
-        | NodeKind::Negation(object)
-        | NodeKind::NonNullishAssertion(object) => collect_facts(object, out),
-        NodeKind::Index { object, index } => {
-            collect_facts(object, out);
-            collect_facts(index, out);
-        }
-        // A string inside a literal is a part of the result, not the result.
-        NodeKind::ArrayLit(items) => {
-            for item in items {
-                collect_facts(item, out);
-            }
-        }
-        NodeKind::ObjectLit(fields) => {
-            for value in fields.values() {
-                collect_facts(value, out);
-            }
-        }
-        NodeKind::Atom(_) => {}
-        NodeKind::Call { callee, args } => match args.split_first() {
-            Some((input, rest)) => {
-                collect_facts(input, out);
-                collect_callee(callee, rest, out);
-            }
-            None => collect_callee(callee, &[], out),
-        },
-        NodeKind::Closure { args: _, body } => collect_facts(body, out),
-    }
+#[derive(Debug)]
+struct FactsCollector<'a> {
+    out: Facts,
+    arg_scope: Vec<&'a str>,
 }
 
-fn collect_callee(callee: &Node, args: &[Node], out: &mut Facts) {
-    use {Atom, Ident, NodeKind};
-    match &callee.kind {
-        NodeKind::Atom(Atom::Ident(Ident(name))) => collect_call(name, callee.span, args, out),
-        _ => {
-            collect_facts(callee, out);
-            for arg in args {
-                collect_facts(arg, out);
-            }
+impl<'a> FactsCollector<'a> {
+    fn new() -> Self {
+        Self {
+            out: Facts::default(),
+            arg_scope: Vec::new(),
         }
     }
-}
 
-/// `is_result` carries through the arguments a builtin hands back untouched,
-/// so `| map({"a": "approved"})` still exposes a status literal.
-fn collect_call(name: &str, span: Span, args: &[Node], out: &mut Facts) {
-    use NodeKind;
-    out.calls.push(Call {
-        name: FactIdent {
-            name: name.to_string(),
-            span,
-        },
-        args: args.len(),
-    });
-    for arg in args {
-        match &arg.kind {
-            NodeKind::ObjectLit(fields) => {
-                for value in fields.values() {
-                    collect_facts(value, out);
+    fn collect_facts(&mut self, node: &'a Node) {
+        if let Some(path) = static_path(node) {
+            if !self.arg_scope.contains(&path[0].name.as_str()) {
+                self.out.paths.push(path);
+                return;
+            }
+        }
+        match &node.kind {
+            NodeKind::Op((Punct::Pipe, (input, call))) => {
+                self.collect_facts(input);
+                match &call.kind {
+                    NodeKind::Atom(Atom::Ident(Ident(name))) => {
+                        self.collect_call(name, call.span, &[])
+                    }
+                    NodeKind::Call { callee, args } => self.collect_callee(callee, args),
+                    _ => self.collect_facts(call),
                 }
             }
-            _ => collect_facts(arg, out),
+            NodeKind::Op((Punct::Coalesce | Punct::Or | Punct::And, (lhs, rhs))) => {
+                self.collect_facts(lhs);
+                self.collect_facts(rhs);
+            }
+            NodeKind::Op((_, (lhs, rhs))) => {
+                self.collect_facts(lhs);
+                self.collect_facts(rhs);
+            }
+            NodeKind::Turnary {
+                operand,
+                truth_node,
+                false_node,
+            } => {
+                self.collect_facts(operand);
+                self.collect_facts(truth_node);
+                self.collect_facts(false_node);
+            }
+            NodeKind::Member { object, .. }
+            | NodeKind::Negation(object)
+            | NodeKind::NonNullishAssertion(object) => self.collect_facts(object),
+            NodeKind::Index { object, index } => {
+                self.collect_facts(object);
+                self.collect_facts(index);
+            }
+            // A string inside a literal is a part of the result, not the result.
+            NodeKind::ArrayLit(items) => {
+                for item in items {
+                    self.collect_facts(item);
+                }
+            }
+            NodeKind::ObjectLit(fields) => {
+                for value in fields.values() {
+                    self.collect_facts(value);
+                }
+            }
+            NodeKind::Atom(_) => {}
+            NodeKind::Call { callee, args } => match args.split_first() {
+                Some((input, rest)) => {
+                    self.collect_facts(input);
+                    self.collect_callee(callee, rest);
+                }
+                None => self.collect_callee(callee, &[]),
+            },
+            NodeKind::Closure { args, body } => {
+                let old_len = self.arg_scope.len();
+                self.arg_scope.extend(args.iter().map(|v| v.0.as_str()));
+                self.collect_facts(body);
+                self.arg_scope.truncate(old_len);
+            }
         }
     }
+
+    fn collect_callee(&mut self, callee: &'a Node, args: &'a [Node]) {
+        use {Atom, Ident, NodeKind};
+        match &callee.kind {
+            NodeKind::Atom(Atom::Ident(Ident(name))) => {
+                self.collect_call(name, callee.span, args);
+            }
+            _ => {
+                self.collect_facts(callee);
+                for arg in args {
+                    self.collect_facts(arg);
+                }
+            }
+        }
+    }
+
+    fn collect_call(&mut self, name: &str, span: Span, args: &'a [Node]) {
+        if !self.arg_scope.contains(&name) {
+            self.out.calls.push(Call {
+                name: FactIdent {
+                    name: name.to_string(),
+                    span,
+                },
+                args: args.len(),
+            });
+        }
+        for arg in args {
+            self.collect_facts(arg);
+        }
+    }
+}
+
+pub fn collect_facts(node: &Node) -> Facts {
+    let mut collector = FactsCollector::new();
+    collector.collect_facts(node);
+    collector.out
 }
 
 /// The segments of a chain of identifier, `.field` and `["key"]` accesses.
@@ -215,12 +239,12 @@ mod tests {
 
     #[test]
     fn exposes_roots_paths_and_calls() {
-        let e = parse_expr(r#"payment.a["b"] ?? settings.c | trim"#)
+        let facts = parse_expr(r#"payment.a["b"] ?? settings.c | trim"#)
             .unwrap()
             .collect_facts();
-        assert_eq!(e.roots(), vec!["payment", "settings"]);
+        assert_eq!(facts.roots(), vec!["payment", "settings"]);
         assert_eq!(
-            e.paths,
+            facts.paths,
             vec![
                 vec![
                     FactIdent::new("payment", 0..7),
@@ -234,7 +258,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            e.calls,
+            facts.calls,
             vec![Call {
                 name: FactIdent::new("trim", 31..35),
                 args: 0
@@ -244,26 +268,57 @@ mod tests {
 
     #[test]
     fn a_dynamic_index_reads_both_sides() {
-        let e = parse_expr("steps.auth[params.key].token")
+        let facts = parse_expr("steps.auth[params.key].token")
             .unwrap()
             .collect_facts();
         assert_eq!(
-            facts_to_string(e.paths),
+            facts_to_string(facts.paths),
             vec![vec!["steps", "auth"], vec!["params", "key"]]
         );
     }
 
     #[test]
     fn literals_expose_the_paths_they_contain() {
-        let e = parse_expr(r#"[params.first_name, "x", {"phone": params.customer.phone}]"#)
+        let facts = parse_expr(r#"[params.first_name, "x", {"phone": params.customer.phone}]"#)
             .unwrap()
             .collect_facts();
         assert_eq!(
-            facts_to_string(e.paths),
+            facts_to_string(facts.paths),
             vec![
                 vec!["params", "first_name"],
                 vec!["params", "customer", "phone"]
             ]
         );
+    }
+
+    #[test]
+    fn closure_arguments_are_not_roots() {
+        let facts = parse_expr(r#"[params.first_name, top_level, nested, |x, name| [x + name, |nested_arg| nested_arg, |nested| nested], nested_arg]"#)
+            .unwrap()
+            .collect_facts();
+        assert_eq!(
+            facts.roots(),
+            vec!["params", "top_level", "nested", "nested_arg"]
+        );
+    }
+
+    #[test]
+    fn closure_argument_not_counted() {
+        let facts = parse_expr(r#"|v| v(foo, bar)"#).unwrap().collect_facts();
+        assert_eq!(facts.roots(), vec!["foo", "bar"]);
+
+        assert!(
+            facts
+                .calls
+                .iter()
+                .find(|Call { name, .. }| name.name == "v")
+                .is_none()
+        )
+    }
+
+    #[test]
+    fn nested_closure_does_not_cleanup_capture() {
+        let facts = parse_expr(r#"|x| [|x| x, x.y] "#).unwrap().collect_facts();
+        assert!(facts.roots().is_empty());
     }
 }

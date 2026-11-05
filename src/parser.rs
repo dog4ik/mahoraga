@@ -66,9 +66,7 @@ pub struct Node {
 
 impl Node {
     pub fn collect_facts(&self) -> facts::Facts {
-        let mut facts = facts::Facts::default();
-        facts::collect_facts(self, &mut facts);
-        facts
+        facts::collect_facts(self)
     }
 }
 
