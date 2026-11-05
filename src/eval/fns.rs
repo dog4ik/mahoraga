@@ -73,6 +73,16 @@ pub trait Callable {
     fn arity(&self) -> usize;
 }
 
+impl<T: TryFromArgument> TryFromArgument for Option<T> {
+    fn parse_argument(value: Value) -> Result<Self, crate::ArgConversionError> {
+        Ok(match value {
+            Value::Null => None,
+            Value::Void => None,
+            _ => Some(T::parse_argument(value)?),
+        })
+    }
+}
+
 macro_rules! impl_callable_with_args {
     () => {};
     ($(($($types:ident),*)),*) => {

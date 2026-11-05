@@ -100,6 +100,19 @@ pub fn std_fns() -> HashMap<&'static str, Rc<Function>> {
             replace_all(String, String, String),
             "Replaces all occurrences of the second argument with the third argument"
         ),
+        declare_fn!(
+            void_if(Value, Value),
+            "Emit when the input equals the argument."
+        ),
+        declare_fn!(split(String, String), "Splits a string into an array."),
+        declare_fn!(
+            slice(String, usize, Option<usize>),
+            "slice(start, end), by chars."
+        ),
+        declare_fn!(
+            pad_start(String, usize, String),
+            "Left-pads to a width with a fill char."
+        ),
     ]
     .into_iter()
     .collect()
@@ -418,6 +431,58 @@ pub fn replace_all(
     replacement: String,
 ) -> Result<Value, RuntimeError> {
     Ok(input.replace(&needle, &replacement).into())
+}
+
+pub fn void_if(
+    _: &mut dyn ExecutionContext,
+    v: Value,
+    other: Value,
+) -> Result<Value, RuntimeError> {
+    Ok(if v == other { Value::Void } else { v })
+}
+
+pub fn split(_: &mut dyn ExecutionContext, v: String, sep: String) -> Result<Value, RuntimeError> {
+    if sep.is_empty() {
+        return Ok(v
+            .chars()
+            .map(|c| String::from(c))
+            .collect::<Vec<_>>()
+            .into());
+    }
+    Ok(v.split(sep.as_str()).collect::<Vec<_>>().into())
+}
+
+pub fn slice(
+    _: &mut dyn ExecutionContext,
+    v: String,
+    start: usize,
+    end: Option<usize>,
+) -> Result<Value, RuntimeError> {
+    let end = end.unwrap_or(usize::MAX);
+    Ok(v.chars()
+        .skip(start)
+        .take(end.saturating_sub(start))
+        .collect::<String>()
+        .into())
+}
+
+pub fn pad_start(
+    _: &mut dyn ExecutionContext,
+    v: String,
+    width: usize,
+    fill: String,
+) -> Result<Value, RuntimeError> {
+    let mut chars = fill.chars();
+    let (Some(fill), None) = (chars.next(), chars.next()) else {
+        Err(FunctionCallError::External(
+            "fill must be exactly one character".into(),
+        ))?
+    };
+    let missing = width.saturating_sub(v.chars().count());
+    Ok(std::iter::repeat_n(fill, missing)
+        .chain(v.chars())
+        .collect::<String>()
+        .into())
 }
 
 #[cfg(test)]
