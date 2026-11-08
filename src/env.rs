@@ -1,12 +1,12 @@
 use std::{collections::HashMap, f64::consts, rc::Rc};
 
 use crate::{
-    Function, Value,
-    eval::std_fns,
-    value::{Number, Object},
+    fns::Function,
+    std_fns,
+    value::{Number, Object, Value},
 };
 
-/// User provider immutable scope.
+/// User's immutable scope.
 #[derive(Debug, Default, Clone)]
 pub struct Env {
     pub fns: HashMap<&'static str, Rc<Function>>,

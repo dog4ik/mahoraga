@@ -1,7 +1,7 @@
 use crate::{
-    Atom::{self},
-    Ident, NodeKind, Punct, Span,
-    parser::Node,
+    lex::{Atom, Ident, Punct},
+    parser::{Node, NodeKind},
+    span::Span,
     value::Number,
 };
 
@@ -226,7 +226,7 @@ fn static_path(Node { kind, span }: &Node) -> Option<Vec<FactIdent>> {
 
 #[cfg(test)]
 mod tests {
-    use crate::parse_expr;
+    use crate::parser::parse_expr;
 
     use super::*;
 

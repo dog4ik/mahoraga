@@ -1,4 +1,4 @@
-use mahoraga::{Env, Value, parse_expr, traverse::TraverseRuntime};
+use mahoraga::{Value, env::Env, parser::parse_expr, traverse::TraverseRuntime};
 fn main() {
     divan::main();
 }
@@ -23,10 +23,9 @@ fn basic_eval(bencher: Bencher, executor: Executor) {
 
     match executor {
         Executor::Vm => {
-            let compiled = mahoraga::bytecode::compile(&node);
+            let compiled = mahoraga::vm::compile(&node);
             bencher.bench_local(|| {
-                mahoraga::bytecode::eval_chunk(black_box(compiled.clone()), black_box(&env))
-                    .unwrap()
+                mahoraga::vm::eval_chunk(black_box(compiled.clone()), black_box(&env)).unwrap()
             });
         }
         Executor::Traverse => bencher

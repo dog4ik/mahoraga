@@ -1,8 +1,8 @@
 use crate::{
-    Env, Value, parse_expr,
-    parser::Node,
+    env::Env,
+    parser::{Node, parse_expr},
     traverse::TraverseRuntime,
-    value::{Array, Object, ValueType},
+    value::{Array, Object, Value, ValueType},
 };
 
 #[derive(Debug, thiserror::Error, PartialEq)]

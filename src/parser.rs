@@ -5,12 +5,12 @@ use std::{
 };
 
 use crate::{
-    Span, facts,
+    facts,
     lex::{Atom, Ident, Lexer, Punct, Tok, Token},
-    span::Spanned,
+    span::{Span, Spanned},
 };
 
-pub type Result<T> = std::result::Result<T, Spanned<ParserError>>;
+pub(crate) type Result<T> = std::result::Result<T, Spanned<ParserError>>;
 
 pub const MAX_PARSER_DEPTH: usize = 100;
 
@@ -56,7 +56,7 @@ impl ParserError {
 
 /// Parsed AST tree representation
 ///
-/// Usually parsed form the source code input [parse_expr](crate::parser::parse_expr)
+/// Usually parsed form the source code input [parse_expr]
 #[derive(Debug, Clone, PartialEq)]
 pub struct Node {
     /// Span occupied by the node
@@ -601,6 +601,7 @@ mod tests {
     use std::assert_matches;
 
     use super::*;
+    use crate::error::Error;
 
     type Result<T> = crate::Result<T>;
 
@@ -1269,7 +1270,7 @@ mod tests {
         let err = parse_expr(&s).unwrap_err();
         assert_matches!(
             err,
-            crate::error::Error::Parser(Spanned {
+            Error::Parser(Spanned {
                 inner: ParserError::DepthLimitReached,
                 ..
             })

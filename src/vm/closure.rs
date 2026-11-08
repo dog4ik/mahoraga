@@ -1,13 +1,13 @@
 use std::rc::Rc;
 
-use crate::{Value, vm::chunk::Chunk};
+use crate::{value::Value, vm::chunk::Chunk};
 
 #[derive(Debug)]
 pub struct VmClosure {
-    pub chunk: Rc<Chunk>,
-    pub entry_idx: usize,
-    pub captures: Vec<Value>,
-    pub arity: u8,
+    pub(crate) chunk: Rc<Chunk>,
+    pub(crate) entry_idx: usize,
+    pub(crate) captures: Vec<Value>,
+    pub(crate) arity: u8,
 }
 
 impl PartialEq for VmClosure {
@@ -17,8 +17,8 @@ impl PartialEq for VmClosure {
 }
 
 #[derive(Debug)]
-pub struct ClosureInfo {
-    pub start_idx: u16,
-    pub captures: u8,
-    pub arity: u8,
+pub(crate) struct ClosureInfo {
+    pub(crate) start_idx: u16,
+    pub(crate) captures: u8,
+    pub(crate) arity: u8,
 }

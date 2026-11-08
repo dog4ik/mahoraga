@@ -1,4 +1,4 @@
-use mahoraga::{Env, Value};
+use mahoraga::{Value, env::Env};
 use ratatui::style::Style;
 use ratatui_textarea::TextArea;
 

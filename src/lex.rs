@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    parser,
+    parser::{self, ParserError},
     span::{Span, Spanned},
 };
 
@@ -112,9 +112,9 @@ impl From<Punct> for Tok {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Token {
-    pub tok: Tok,
-    pub span: Span,
+pub(crate) struct Token {
+    pub(crate) tok: Tok,
+    pub(crate) span: Span,
 }
 
 impl Display for Token {
@@ -165,7 +165,7 @@ pub enum Punct {
 }
 
 impl Punct {
-    pub fn infix_binding_power(&self) -> Option<(u8, u8)> {
+    pub(crate) fn infix_binding_power(&self) -> Option<(u8, u8)> {
         match self {
             Punct::Pipe => Some((1, 2)),
             Punct::Question => Some((4, 3)),
@@ -183,14 +183,14 @@ impl Punct {
         }
     }
 
-    pub fn postfix_binding_power(&self) -> Option<(u8, ())> {
+    pub(crate) fn postfix_binding_power(&self) -> Option<(u8, ())> {
         match self {
             Punct::Dot | Punct::OpenBracket | Punct::OpenParen | Punct::Bang => Some((16, ())),
             _ => None,
         }
     }
 
-    pub fn prefix_binding_power(&self) -> Option<((), u8)> {
+    pub(crate) fn prefix_binding_power(&self) -> Option<((), u8)> {
         match self {
             Punct::Add | Punct::Sub | Punct::Bang => Some(((), 15)),
             _ => None,
@@ -307,7 +307,7 @@ impl FromStr for Ident {
 const IMPLICIT_SEPARATORS: &[u8] = b"()+-/*|&[]{},:?<>=\"'!";
 
 #[derive(Debug)]
-pub struct Lexer {
+pub(crate) struct Lexer {
     tokens: Vec<Token>,
     /// Lexer position in the tokens
     pos: usize,
@@ -608,20 +608,20 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
 }
 
 impl Lexer {
-    pub fn new(input: &str) -> Result<Lexer> {
+    pub(crate) fn new(input: &str) -> Result<Lexer> {
         Ok(Lexer {
             tokens: tokenize(input)?,
             pos: 0,
         })
     }
 
-    pub fn advance(&mut self) -> Option<Token> {
+    pub(crate) fn advance(&mut self) -> Option<Token> {
         let token = self.tokens.get(self.pos)?;
         self.pos += 1;
         Some(token.clone())
     }
 
-    pub fn expect_next(&mut self, tok: Tok) -> parser::Result<Token> {
+    pub(crate) fn expect_next(&mut self, tok: Tok) -> parser::Result<Token> {
         let token = self.tokens.get(self.pos).ok_or_else(|| {
             Spanned::new(
                 parser::ParserError::UnexpectedEof {
@@ -643,10 +643,10 @@ impl Lexer {
         Ok(token.clone())
     }
 
-    pub fn expect_eof(&mut self) -> crate::parser::Result<()> {
+    pub(crate) fn expect_eof(&mut self) -> parser::Result<()> {
         match self.advance() {
             Some(tok) => Err(Spanned::new(
-                crate::parser::ParserError::ExpectedEof {
+                ParserError::ExpectedEof {
                     got: tok.to_string(),
                 },
                 tok.span,
@@ -655,15 +655,15 @@ impl Lexer {
         }
     }
 
-    pub fn peek(&self) -> Option<Token> {
+    pub(crate) fn peek(&self) -> Option<Token> {
         self.tokens.get(self.pos).cloned()
     }
 
-    pub fn pos(&self) -> usize {
+    pub(crate) fn pos(&self) -> usize {
         self.pos
     }
 
-    pub fn end_span(&self) -> Span {
+    pub(crate) fn end_span(&self) -> Span {
         self.tokens
             .last()
             .map(|t| t.span)

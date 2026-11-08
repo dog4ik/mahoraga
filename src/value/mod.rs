@@ -5,9 +5,11 @@ use std::{
 };
 
 use crate::{
-    Function, Punct,
-    eval::{ExecutionContext, OpError, RuntimeError, closure::Closure},
+    error::RuntimeError,
+    fns::{Args, Callable, ExecutionContext, Function},
+    lex::Punct,
     parser::fmt_comma_separated,
+    traverse::closure::Closure,
     vm::closure::VmClosure,
 };
 
@@ -110,11 +112,11 @@ impl PartialOrd for Number {
 macro_rules! impl_op {
     ($method: ident, $checked: ident, $sign: tt) => {
         /// Integer overflow and division by zero are errors, not panics.
-        pub fn $method(self, rhs: Self) -> std::result::Result<Self, crate::eval::RuntimeError> {
+        pub fn $method(self, rhs: Self) -> std::result::Result<Self, RuntimeError> {
             Ok(match (self, rhs) {
                 (Number::Int(lhs), Number::Int(rhs)) => {
                     Number::Int(lhs.$checked(rhs).ok_or_else(|| {
-                        $crate::eval::RuntimeError::IntegerOverflow
+                        RuntimeError::IntegerOverflow
                     })?)
                 }
                 (lhs, rhs) => Number::Float(lhs.as_f64() $sign rhs.as_f64()),
@@ -153,6 +155,12 @@ impl Display for Number {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum OpError {
+    #[error("unsupported {0} operands: {1} and {2}")]
+    UnsupportedOperands(Punct, ValueType, ValueType),
+}
+
 #[derive(Debug)]
 pub enum CallableValue {
     Closure(Closure),
@@ -160,12 +168,8 @@ pub enum CallableValue {
     VmClosure(Rc<VmClosure>),
 }
 
-impl crate::Callable for CallableValue {
-    fn call(
-        &self,
-        ctx: &mut dyn ExecutionContext,
-        args: crate::Args,
-    ) -> Result<Value, RuntimeError> {
+impl Callable for CallableValue {
+    fn call(&self, ctx: &mut dyn ExecutionContext, args: Args) -> Result<Value, RuntimeError> {
         let reference = CallableRef::from(self);
         ctx.call(&reference, args).map_err(|e| e.inner)
     }
@@ -214,12 +218,8 @@ impl From<Rc<VmClosure>> for CallableRef<'_> {
     }
 }
 
-impl crate::Callable for CallableRef<'_> {
-    fn call(
-        &self,
-        ctx: &mut dyn ExecutionContext,
-        args: crate::Args,
-    ) -> Result<Value, RuntimeError> {
+impl Callable for CallableRef<'_> {
+    fn call(&self, ctx: &mut dyn ExecutionContext, args: Args) -> Result<Value, RuntimeError> {
         ctx.call(self, args).map_err(|e| e.inner)
     }
 

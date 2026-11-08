@@ -3,7 +3,11 @@ use std::{
     rc::Rc,
 };
 
-use crate::{RuntimeError, Value, eval::ExecutionContext};
+use crate::{
+    error::{FunctionCallError, RuntimeError},
+    span::Spanned,
+    value::{CallableRef, Value, ValueType},
+};
 
 /// Native function input arguments value list
 #[derive(Debug)]
@@ -13,6 +17,7 @@ impl Args {
     pub fn one(v: Value) -> Self {
         Self(vec![v])
     }
+
     pub fn len(&self) -> usize {
         self.0.len()
     }
@@ -64,7 +69,7 @@ impl Debug for Function {
 }
 
 pub trait TryFromArgument: Sized {
-    fn parse_argument(value: Value) -> Result<Self, crate::ArgConversionError>;
+    fn parse_argument(value: Value) -> Result<Self, ArgConversionError>;
 }
 
 pub trait Callable {
@@ -74,7 +79,7 @@ pub trait Callable {
 }
 
 impl<T: TryFromArgument> TryFromArgument for Option<T> {
-    fn parse_argument(value: Value) -> Result<Self, crate::ArgConversionError> {
+    fn parse_argument(value: Value) -> Result<Self, ArgConversionError> {
         Ok(match value {
             Value::Null => None,
             Value::Void => None,
@@ -87,15 +92,15 @@ macro_rules! impl_callable_with_args {
     () => {};
     ($(($($types:ident),*)),*) => {
         $(
-            impl<$($types: $crate::TryFromArgument),*> Callable for fn(&mut dyn ExecutionContext, $($types,)*) -> std::result::Result<$crate::Value, $crate::eval::RuntimeError> {
-                fn call(&self, ctx: &mut dyn ExecutionContext, args: Args) -> std::result::Result<$crate::Value, $crate::eval::RuntimeError> {
+            impl<$($types: TryFromArgument),*> Callable for fn(&mut dyn ExecutionContext, $($types,)*) -> std::result::Result<Value, RuntimeError> {
+                fn call(&self, ctx: &mut dyn ExecutionContext, args: Args) -> std::result::Result<Value, RuntimeError> {
                     let mut args = args.0.into_iter();
                     let args_len = args.len();
                     (self)(
                         ctx,
                         $(
-                            $types::parse_argument(args.next().unwrap_or($crate::Value::Void)).map_err(|err|
-                                $crate::eval::FunctionCallError::InvalidArgument {
+                            $types::parse_argument(args.next().unwrap_or(Value::Void)).map_err(|err|
+                                FunctionCallError::InvalidArgument {
                                     err: err.into(),
                                     argument_pos: args_len - args.len()}
                             )?,
@@ -123,4 +128,33 @@ impl_callable_with_args! {
     (A, B, C, D, E, F, G, H, I, J),
     (A, B, C, D, E, F, G, H, I, J, K),
     (A, B, C, D, E, F, G, H, I, J, K, L)
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ArgConversionError {
+    #[error("expected {expected:?}, got {got}")]
+    UnexpectedArgumentType {
+        got: ValueType,
+        expected: &'static [ValueType],
+    },
+    #[error("number overflow")]
+    NumberOverflow,
+    #[error("{0}")]
+    IntConversionError(#[from] std::num::TryFromIntError),
+    #[error("{0}")]
+    FloatConversionError(#[from] std::num::ParseFloatError),
+}
+
+impl From<std::convert::Infallible> for ArgConversionError {
+    fn from(value: std::convert::Infallible) -> Self {
+        match value {}
+    }
+}
+
+pub trait ExecutionContext {
+    fn call(
+        &mut self,
+        f: &CallableRef,
+        args: Args,
+    ) -> std::result::Result<Value, Spanned<RuntimeError>>;
 }

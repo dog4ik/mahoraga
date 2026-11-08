@@ -1,4 +1,4 @@
-use crate::Span;
+use crate::span::Span;
 
 #[derive(Debug, Clone, Copy)]
 pub enum OpCode {
@@ -22,6 +22,8 @@ pub enum OpCode {
     JumpIfFalsy {
         position: u16,
     },
+    // handled by vm, not emitted by compiler
+    #[allow(dead_code)]
     JumpIfTruthy {
         position: u16,
     },
@@ -75,13 +77,6 @@ pub struct Instructions {
 }
 
 impl Instructions {
-    pub fn new() -> Self {
-        Self {
-            code: Vec::new(),
-            spans: Vec::new(),
-        }
-    }
-
     pub fn span_for(&self, instruction_idx: usize) -> Span {
         self.spans[instruction_idx]
     }
@@ -112,9 +107,5 @@ impl Instructions {
 
     pub fn len(&self) -> usize {
         self.code.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.code.is_empty()
     }
 }

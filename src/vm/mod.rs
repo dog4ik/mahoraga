@@ -1,12 +1,16 @@
 use std::{collections::HashMap, rc::Rc};
 
 use crate::{
-    Callable, Env, RuntimeError, Spanned, Value,
-    eval::ExecutionContext,
-    value::{Array, Number, Object, ValueType},
+    env::Env,
+    error::RuntimeError,
+    fns::{Args, Callable, ExecutionContext},
+    parser::Node,
+    span::Spanned,
+    value::{Array, CallableRef, Number, Object, Value, ValueType},
     vm::{
-        chunk::PathRoot,
+        chunk::{Chunk, PathRoot},
         closure::{ClosureInfo, VmClosure},
+        compiler::Compiler,
         opcode::OpCode,
         stack::Stack,
     },
@@ -14,10 +18,29 @@ use crate::{
 
 pub mod chunk;
 pub mod closure;
-pub mod compiler;
+mod compiler;
 mod constants;
 mod opcode;
 mod stack;
+
+/// Compiles `node` to bytecode and evaluates it.
+pub fn eval(node: &Node, env: &Env) -> crate::Result<Value> {
+    let mut vm = VirtualMachine::new(compile(node), env);
+    Ok(vm.eval()?)
+}
+
+/// Compiles `node` to a reusable bytecode [Chunk].
+pub fn compile(node: &Node) -> Rc<Chunk> {
+    let mut compiler = Compiler::new();
+    compiler.compile(node);
+    Rc::new(compiler.into_chunk())
+}
+
+/// Evaluates a chunk produced by [compile].
+pub fn eval_chunk(chunk: Rc<Chunk>, env: &Env) -> crate::Result<Value> {
+    let mut vm = VirtualMachine::new(chunk, env);
+    Ok(vm.eval()?)
+}
 
 const MAX_STACK: usize = 500;
 
@@ -30,7 +53,7 @@ struct CallFrame {
     base_idx: usize,
 }
 
-pub struct VirtualMachine<'a> {
+pub(crate) struct VirtualMachine<'a> {
     frames: Vec<CallFrame>,
     env: &'a Env,
     ip: usize,
@@ -38,7 +61,7 @@ pub struct VirtualMachine<'a> {
 }
 
 impl<'a> VirtualMachine<'a> {
-    pub fn new(chunk: Rc<chunk::Chunk>, env: &'a Env) -> Self {
+    pub(crate) fn new(chunk: Rc<chunk::Chunk>, env: &'a Env) -> Self {
         Self {
             frames: vec![CallFrame {
                 chunk,
@@ -67,7 +90,7 @@ impl<'a> VirtualMachine<'a> {
         Ok(())
     }
 
-    pub fn eval(&mut self) -> std::result::Result<Value, Spanned<RuntimeError>> {
+    pub(crate) fn eval(&mut self) -> std::result::Result<Value, Spanned<RuntimeError>> {
         self.run(0)
     }
 
@@ -285,7 +308,7 @@ impl<'a> VirtualMachine<'a> {
                             let Value::Function(callee) = self.stack.pop() else {
                                 unreachable!("callee was just matched as a function")
                             };
-                            let return_value = callee.call(self, crate::Args(args))?;
+                            let return_value = callee.call(self, Args(args))?;
                             self.stack.push(return_value);
                             self.ip += 1;
                         }
@@ -372,21 +395,21 @@ impl<'a> VirtualMachine<'a> {
 impl ExecutionContext for VirtualMachine<'_> {
     fn call(
         &mut self,
-        f: &crate::value::CallableRef,
-        args: crate::Args,
-    ) -> std::result::Result<crate::Value, Spanned<crate::RuntimeError>> {
+        f: &CallableRef,
+        args: Args,
+    ) -> std::result::Result<Value, Spanned<RuntimeError>> {
         match f {
-            crate::value::CallableRef::Closure(_) => {
+            CallableRef::Closure(_) => {
                 panic!("calling traverse evaluator closures inside vm is not supported")
             }
-            crate::value::CallableRef::ExternalFunction(function) => {
+            CallableRef::ExternalFunction(function) => {
                 let value = function.f.call(self, args).map_err(|e| {
                     let frame = self.frames.last().expect("at least one frame");
                     e.with_span(frame.chunk.code.span_for(self.ip))
                 })?;
                 Ok(value)
             }
-            crate::value::CallableRef::VmClosure(vm_closure) => {
+            CallableRef::VmClosure(vm_closure) => {
                 // Same stack layout as OpCode::FnCall: closure followed by the arguments
                 let stop_depth = self.frames.len();
                 let return_ip = self.ip;
@@ -443,15 +466,12 @@ fn array_position(index: &Value) -> Result<Option<usize>, RuntimeError> {
 
 #[cfg(test)]
 mod tests {
-    use crate::vm::compiler::Compiler;
-
     use super::*;
+    use crate::parser::parse_expr;
 
     fn ev(s: &str) -> Value {
-        let mut compiler = Compiler::new();
-        compiler.compile(&crate::parser::parse_expr(s).unwrap());
-        let env = crate::Env::std();
-        let mut vm = compiler.into_vm(&env);
+        let env = Env::std();
+        let mut vm = VirtualMachine::new(compile(&parse_expr(s).unwrap()), &env);
         dbg!(&vm.frames);
         let value = vm.eval().unwrap();
         debug_assert!(
@@ -470,10 +490,9 @@ mod tests {
 
     #[test]
     fn callback_error_unwinds() {
-        let mut compiler = Compiler::new();
-        compiler.compile(&crate::parser::parse_expr("[1, 2] | map(|v| v * {})").unwrap());
-        let env = crate::Env::std();
-        let mut vm = compiler.into_vm(&env);
+        let env = Env::std();
+        let node = parse_expr("[1, 2] | map(|v| v * {})").unwrap();
+        let mut vm = VirtualMachine::new(compile(&node), &env);
         assert!(vm.eval().is_err());
         assert_eq!(vm.frames.len(), 1);
     }

@@ -1,31 +1,40 @@
 use std::{iter::Rev, rc::Rc, slice};
 
-use super::Result;
 use crate::{
-    Args, Atom, Callable, Env, FunctionCallError, Ident, Node, NodeKind, Punct, RuntimeError, Span,
-    Spanned, Value,
-    eval::{ExecutionContext, closure::Closure},
-    value::{Array, Number, Object, ValueType},
+    env::Env,
+    error::{FunctionCallError, RuntimeError},
+    fns::{Args, Callable, ExecutionContext},
+    lex::{Atom, Ident, Punct},
+    parser::{Node, NodeKind},
+    span::{Span, Spanned},
+    traverse::closure::Closure,
+    value::{Array, CallableRef, Number, Object, Value, ValueType},
 };
 
+pub mod closure;
+
+type Result<T> = std::result::Result<T, Spanned<RuntimeError>>;
+
+const MAX_DEPTH: usize = 250;
+
 #[derive(Debug)]
-pub struct StackFrame {
+pub(crate) struct StackFrame {
     scope: Vec<(Rc<str>, Value)>,
 }
 
 impl StackFrame {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self { scope: Vec::new() }
     }
 
-    pub fn get(&self, name: &str) -> Option<&Value> {
+    pub(crate) fn get(&self, name: &str) -> Option<&Value> {
         self.scope
             .iter()
             .find(|(k, _)| k.as_ref() == name)
             .map(|(_, v)| v)
     }
 
-    pub fn add(&mut self, name: Rc<str>, value: Value) {
+    pub(crate) fn add(&mut self, name: Rc<str>, value: Value) {
         self.scope.push((name, value));
     }
 }
@@ -55,36 +64,28 @@ impl<'a> IntoIterator for &'a mut Stack {
 }
 
 #[derive(Debug, Default)]
-pub struct Stack(Vec<StackFrame>);
+pub(crate) struct Stack(Vec<StackFrame>);
 
 impl Stack {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self(Vec::new())
     }
 
-    pub fn pop(&mut self) -> Option<StackFrame> {
+    pub(crate) fn pop(&mut self) -> Option<StackFrame> {
         self.0.pop()
     }
 
-    pub fn push(&mut self, frame: StackFrame) {
+    pub(crate) fn push(&mut self, frame: StackFrame) {
         self.0.push(frame);
-    }
-
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
     }
 }
 
 /// Mutable variable scope used at runtime
 pub struct TraverseRuntime<'a> {
-    pub env: &'a Env,
-    pub current_depth: usize,
-    pub current_span: Span,
-    pub stack: Stack,
+    pub(crate) env: &'a Env,
+    pub(crate) current_depth: usize,
+    pub(crate) current_span: Span,
+    pub(crate) stack: Stack,
 }
 
 impl<'a> TraverseRuntime<'a> {
@@ -97,7 +98,7 @@ impl<'a> TraverseRuntime<'a> {
         }
     }
 
-    pub fn lookup_value(&'a self, name: &str) -> Option<&'a Value> {
+    pub(crate) fn lookup_value(&'a self, name: &str) -> Option<&'a Value> {
         self.stack
             .into_iter()
             .find_map(|frame| frame.get(name))
@@ -108,11 +109,11 @@ impl<'a> TraverseRuntime<'a> {
 impl ExecutionContext for TraverseRuntime<'_> {
     fn call(
         &mut self,
-        f: &crate::value::CallableRef,
-        args: crate::Args,
-    ) -> std::result::Result<crate::Value, Spanned<RuntimeError>> {
+        f: &CallableRef,
+        args: Args,
+    ) -> std::result::Result<Value, Spanned<RuntimeError>> {
         match f {
-            crate::value::CallableRef::Closure(closure) => {
+            CallableRef::Closure(closure) => {
                 let mut frame = StackFrame::new();
                 let mut args = args.0.into_iter();
                 for closure_arg in closure.args.iter() {
@@ -124,13 +125,13 @@ impl ExecutionContext for TraverseRuntime<'_> {
                 self.stack.pop();
                 res
             }
-            crate::value::CallableRef::ExternalFunction(function) => {
+            CallableRef::ExternalFunction(function) => {
                 let value = function
                     .call(self, args)
                     .map_err(|e| e.with_span(self.current_span))?;
                 Ok(value)
             }
-            crate::value::CallableRef::VmClosure(_) => {
+            CallableRef::VmClosure(_) => {
                 panic!("calling vm closures during traverse evaluation is not supported")
             }
         }
@@ -256,7 +257,7 @@ impl<'a> TraverseRuntime<'a> {
     pub fn eval(&mut self, Node { span, kind }: &Node) -> Result<Value> {
         self.current_depth += 1;
         self.current_span = *span;
-        if self.current_depth >= super::MAX_DEPTH {
+        if self.current_depth >= MAX_DEPTH {
             return Err(Spanned::new(RuntimeError::DepthLimitReached, *span));
         }
         let res = match kind {
@@ -352,7 +353,7 @@ fn call_value(
     callee: Value,
     args: Args,
     name: Option<&str>,
-) -> std::result::Result<Value, crate::RuntimeError> {
+) -> std::result::Result<Value, RuntimeError> {
     match callee {
         Value::Function(f) => f.call(env, args),
         Value::Closure(closure) => closure.call(env, args).map_err(|e| e.inner),

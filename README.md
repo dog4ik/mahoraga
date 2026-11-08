@@ -5,12 +5,12 @@ Small WIP expression language
 ## Usage example
 
 ```rust
-fn my_custom_fn(_: &mut dyn mahoraga::ExecutionContext, s: String, n: usize) -> Result<mahoraga::Value, mahoraga::RuntimeError> {
+fn my_custom_fn(_: &mut dyn mahoraga::fns::ExecutionContext, s: String, n: usize) -> Result<mahoraga::Value, mahoraga::error::RuntimeError> {
     Ok(std::iter::repeat_n(s, n).collect::<String>().into())
 }
 
 fn main() {
-    let mut env = mahoraga::Env::default();
+    let mut env = mahoraga::env::Env::default();
     assert_eq!(
         mahoraga::eval_str("1 + 2 * 5", &env).unwrap(),
         mahoraga::Value::Number(11.0.into())

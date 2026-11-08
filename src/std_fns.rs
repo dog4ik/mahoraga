@@ -1,9 +1,9 @@
 use std::{collections::HashMap, rc::Rc};
 
 use crate::{
-    Callable, RuntimeError, Value,
-    eval::{ExecutionContext, FunctionCallError, fns::Function},
-    value::{Array, CallableValue, Number, Object, ValueType},
+    error::{FunctionCallError, RuntimeError},
+    fns::{ArgConversionError, Args, Callable, ExecutionContext, Function},
+    value::{Array, CallableValue, Number, Object, Value, ValueType},
 };
 
 #[macro_export]
@@ -16,10 +16,10 @@ macro_rules! declare_fn {
     ($name:expr, $callable:path, ($($arg:ty),*), $help:literal) => {
         (
             $name,
-            ::std::rc::Rc::new($crate::Function {
+            ::std::rc::Rc::new($crate::fns::Function {
                 name: ::std::rc::Rc::from($name),
                 help: Some($help),
-                f: Box::new($callable as fn(&mut dyn $crate::ExecutionContext, $($arg),*) -> ::std::result::Result<$crate::Value, $crate::RuntimeError>),
+                f: Box::new($callable as fn(&mut dyn $crate::fns::ExecutionContext, $($arg),*) -> ::std::result::Result<$crate::value::Value, $crate::error::RuntimeError>),
             }),
         )
     };
@@ -283,7 +283,7 @@ pub fn to_i(_: &mut dyn ExecutionContext, val: Value) -> Result<Value, RuntimeEr
                 Err(_) => s.parse::<f64>().map(|v| v as i64).map_err(|e| {
                     FunctionCallError::InvalidArgument {
                         argument_pos: 1,
-                        err: super::ArgConversionError::FloatConversionError(e),
+                        err: ArgConversionError::FloatConversionError(e),
                     }
                 })?,
             };
@@ -291,7 +291,7 @@ pub fn to_i(_: &mut dyn ExecutionContext, val: Value) -> Result<Value, RuntimeEr
         }
         _ => Err(FunctionCallError::InvalidArgument {
             argument_pos: 1,
-            err: super::ArgConversionError::UnexpectedArgumentType {
+            err: ArgConversionError::UnexpectedArgumentType {
                 got: val.value_type(),
                 expected: &[ValueType::Float, ValueType::Integer, ValueType::String],
             },
@@ -309,7 +309,7 @@ pub fn to_f(_: &mut dyn ExecutionContext, val: Value) -> Result<Value, RuntimeEr
                 Err(e) => s.parse::<i64>().map(|v| v as f64).map_err(|_| {
                     FunctionCallError::InvalidArgument {
                         argument_pos: 1,
-                        err: super::ArgConversionError::FloatConversionError(e),
+                        err: ArgConversionError::FloatConversionError(e),
                     }
                 })?,
             };
@@ -317,7 +317,7 @@ pub fn to_f(_: &mut dyn ExecutionContext, val: Value) -> Result<Value, RuntimeEr
         }
         _ => Err(FunctionCallError::InvalidArgument {
             argument_pos: 1,
-            err: super::ArgConversionError::UnexpectedArgumentType {
+            err: ArgConversionError::UnexpectedArgumentType {
                 got: val.value_type(),
                 expected: &[ValueType::Float, ValueType::Integer, ValueType::String],
             },
@@ -355,7 +355,7 @@ pub fn map(
 ) -> Result<Value, RuntimeError> {
     Ok(Value::Array(Array(
         arr.into_iter()
-            .map(|v| f.call(e, crate::Args::one(v)))
+            .map(|v| f.call(e, Args::one(v)))
             .collect::<Result<Vec<_>, _>>()?,
     )))
 }
@@ -367,7 +367,7 @@ pub fn filter_map(
 ) -> Result<Value, RuntimeError> {
     Ok(Value::Array(Array(
         arr.into_iter()
-            .filter_map(|v| match f.call(e, crate::Args::one(v)) {
+            .filter_map(|v| match f.call(e, Args::one(v)) {
                 Ok(o) if o.truthy() => Some(Ok(o)),
                 Ok(_) => None,
                 Err(e) => Some(Err(e)),
@@ -383,7 +383,7 @@ pub fn filter(
 ) -> Result<Value, RuntimeError> {
     Ok(Value::Array(Array(
         arr.into_iter()
-            .filter_map(|v| match f.call(e, crate::Args::one(v.clone())) {
+            .filter_map(|v| match f.call(e, Args::one(v.clone())) {
                 Ok(o) if o.truthy() => Some(Ok(v)),
                 Ok(_) => None,
                 Err(e) => Some(Err(e)),
@@ -399,7 +399,7 @@ pub fn find(
 ) -> Result<Value, RuntimeError> {
     Ok(arr
         .into_iter()
-        .find_map(|v| match f.call(e, crate::Args::one(v.clone())) {
+        .find_map(|v| match f.call(e, Args::one(v.clone())) {
             Ok(o) if o.truthy() => Some(Ok(v)),
             Ok(_) => None,
             Err(e) => Some(Err(e)),
@@ -415,7 +415,7 @@ pub fn find_map(
 ) -> Result<Value, RuntimeError> {
     Ok(arr
         .into_iter()
-        .find_map(|v| match f.call(e, crate::Args::one(v)) {
+        .find_map(|v| match f.call(e, Args::one(v)) {
             Ok(o) if o.truthy() => Some(Ok(o)),
             Ok(_) => None,
             Err(e) => Some(Err(e)),
@@ -484,22 +484,17 @@ pub fn pad_start(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        Args, Callable, Env, RuntimeError, eval::ExecutionContext, eval_str, value::Object,
-    };
+    use crate::{env::Env, eval_str, fns::Args};
 
     mod scaling {
         use crate::{
-            eval::{ExecutionContext, RuntimeError},
-            value::Number,
+            error::RuntimeError,
+            fns::ExecutionContext,
+            value::{Number, Value},
         };
 
-        pub fn scale(
-            _: &mut dyn ExecutionContext,
-            v: f64,
-            by: u32,
-        ) -> Result<crate::Value, RuntimeError> {
-            Ok(crate::Value::Number(Number::Float(v * f64::from(by))))
+        pub fn scale(_: &mut dyn ExecutionContext, v: f64, by: u32) -> Result<Value, RuntimeError> {
+            Ok(Value::Number(Number::Float(v * f64::from(by))))
         }
     }
 
@@ -538,13 +533,10 @@ mod tests {
 
     #[test]
     fn containers_and_bools_convert() {
-        use crate::TryFromArgument;
+        use crate::fns::TryFromArgument;
         assert!(bool::parse_argument(Value::Bool(true)).unwrap());
         assert!(Object::parse_argument(Value::Object(Object::default())).is_ok());
-        assert!(
-            crate::value::Array::parse_argument(Value::Array(crate::value::Array::default()))
-                .is_ok()
-        );
+        assert!(Array::parse_argument(Value::Array(Array::default())).is_ok());
         assert!(bool::parse_argument(Value::Void).is_err());
     }
 

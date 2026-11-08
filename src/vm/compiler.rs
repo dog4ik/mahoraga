@@ -1,10 +1,9 @@
-use std::rc::Rc;
-
 use crate::{
-    Atom, Env, Ident, Node, NodeKind, Punct, Span, Value,
-    value::ValueType,
+    lex::{Atom, Ident, Punct},
+    parser::{Node, NodeKind},
+    span::Span,
+    value::{Value, ValueType},
     vm::{
-        VirtualMachine,
         chunk::{AccessPath, Chunk, PathRoot},
         closure::ClosureInfo,
         constants::ConstantsPool,
@@ -65,10 +64,6 @@ impl Compiler {
     pub fn compile(&mut self, node: &Node) {
         self.compile_inner(node);
         self.chunk.emit(OpCode::Return, node.span);
-    }
-
-    pub fn into_vm(self, env: &Env) -> VirtualMachine<'_> {
-        VirtualMachine::new(Rc::new(self.chunk), env)
     }
 
     pub fn into_chunk(self) -> Chunk {
