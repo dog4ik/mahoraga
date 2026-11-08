@@ -83,11 +83,11 @@ impl<'a> FactsCollector<'a> {
     }
 
     fn collect_facts(&mut self, node: &'a Node) {
-        if let Some(path) = static_path(node) {
-            if !self.arg_scope.contains(&path[0].name.as_str()) {
-                self.out.paths.push(path);
-                return;
-            }
+        if let Some(path) = static_path(node)
+            && !self.arg_scope.contains(&path[0].name.as_str())
+        {
+            self.out.paths.push(path);
+            return;
         }
         match &node.kind {
             NodeKind::Op((Punct::Pipe, (input, call))) => {

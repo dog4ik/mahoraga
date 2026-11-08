@@ -443,11 +443,7 @@ pub fn void_if(
 
 pub fn split(_: &mut dyn ExecutionContext, v: String, sep: String) -> Result<Value, RuntimeError> {
     if sep.is_empty() {
-        return Ok(v
-            .chars()
-            .map(|c| String::from(c))
-            .collect::<Vec<_>>()
-            .into());
+        return Ok(v.chars().map(String::from).collect::<Vec<_>>().into());
     }
     Ok(v.split(sep.as_str()).collect::<Vec<_>>().into())
 }
